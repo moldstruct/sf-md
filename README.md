@@ -1,7 +1,7 @@
 # Hybrid Strong-Field / Molecular Dynamics (SF/MD)
 
 This is a strong-field ionization Molecular Dynamics (SF/MD) model that is part of the **MOLDSTRUCT** toolbox. It can be used to simulate laser-induced ionization in the optical regieme based on ADK theory and the resulting Coulomb explosion of molecular systems, from small clusters up to whole proteins.
-The code is based on a modified version of GROMACS ([webpage](https://www.gromacs.org/)), with functionality close to normal GROMACS plus additional parameters (an `-ionize` module) that drive ionization from a laser/X-ray pulse.
+The code is based on a modified version of GROMACS ([webpage](https://www.gromacs.org/)), with functionality close to normal GROMACS plus additional parameters (an `-ionize` module) that drive ionization from a laser pulse.
 The model is developed by the Biophysics group at Uppsala University.
 
 # Manual
@@ -79,7 +79,7 @@ All standard GROMACS output like the `.trr`, `.edr`, `.gro`, `.log` and `.cpt` f
 
 When `userint5` is set to 1, additional output is written to `simulation_output/` (created automatically in the directory `mdrun` is called from):
 
-- **`pulse_profile.txt`** — intensity of the laser pulse at each timestep. Column 1: time [ps]. Column 2: X-ray intensity.
+- **`pulse_profile.txt`** — intensity of the laser pulse at each timestep. Column 1: time [ps]. Column 2: laser intensity.
 - **`mean_charge_vs_time.txt`** — mean charge of the system over time, flushed every `userint7` steps. Column 1: time [ps]. Column 2: mean charge [e].
 - **`charges_over_time.bin`** — per-atom charge, logged in binary, same flush interval as above.
 - **`masses.bin`** — per-atom mass, written once.
@@ -104,4 +104,4 @@ Multithreaded runs require `-pd` rather than the default domain decomposition (s
 
 ### Compatibility
 
-Has only been tested on Linux.
+Has only been tested on Linux systems.
