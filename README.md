@@ -101,3 +101,7 @@ For high ionization we get huge forces, which can make the numerical integration
 ### Parallelization
 
 Multithreaded runs require `-pd` rather than the default domain decomposition (see "Running a simulation" above).
+
+### Compatibility
+
+Has only been tested on Linux.
