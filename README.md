@@ -90,7 +90,7 @@ If you do not need this data, it is recommended to leave `userint5` off, as it c
 
 ## Example
 
-_(TODO: add a worked example, e.g. blowing up a small protein or water cluster, along the lines of the MC/MD model's example — sample `.mdp`, `pdb2gmx`/`grompp`/`mdrun` commands, and expected output.)_
+_(TODO: add a worked example,`.mdp`, `pdb2gmx`/`grompp`/`mdrun` commands, and expected output.)_
 
 ## Limitations
 
