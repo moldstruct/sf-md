@@ -54,9 +54,17 @@ void sfionize_step(t_sfionize *sf, const t_inputrec *ir, t_mdatoms *mdatoms,
 
 /* Autostop test (sfmd-autostop): TRUE once E_kin/E_tot exceeds
  * sfmd-autostop-threshold.  Kept out of the step function because do_md only
- * knows the energies later in the step. */
+ * knows the energies later in the step.
+ *
+ * bEnergiesGlobal must be do_md's bGStat: enerd->term[] is only reduced
+ * across ranks on global-communication steps, and on every other step it
+ * holds this rank's partial sums, so the ratio is not the system's.  The
+ * decision is taken on one rank and broadcast, because every rank has to
+ * reach the same answer - if one leaves the MD loop and the others do not,
+ * they hang in the next collective. */
 gmx_bool sfionize_autostop(const t_sfionize *sf, const t_inputrec *ir,
-                           double E_kin, double E_tot, gmx_large_int_t step);
+                           double E_kin, double E_tot, gmx_large_int_t step,
+                           gmx_bool bEnergiesGlobal, const t_commrec *cr);
 
 /* Write the final per-atom charge dump and release everything.  Safe to call
  * with sf == NULL. */

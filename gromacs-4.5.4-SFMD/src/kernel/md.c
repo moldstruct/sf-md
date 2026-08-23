@@ -2769,7 +2769,7 @@ double do_md(FILE *fplog, t_commrec *cr, int nfile, const t_filenm fnm[],
         /* Autostop (sfmd-autostop): here rather than in sfionize_step()
          * because the energies are only known at this point in the step. */
         if (sfionize_autostop(sfion, ir, enerd->term[F_EKIN],
-                              enerd->term[F_ETOT], step))
+                              enerd->term[F_ETOT], step, bGStat, cr))
         {
             bLastStep = TRUE;
         }
