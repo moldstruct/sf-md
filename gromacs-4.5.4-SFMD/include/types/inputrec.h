@@ -273,21 +273,26 @@ typedef struct {
   int  userint2;
   int  userint3;
   int  userint4;
-  int  userint5;        /* User determined parameters                   */
-  int  userint6;
-  int  userint7;
-  int  userint8;
-  int  userint9;
-
   real userreal1;
   real userreal2;
   real userreal3;
   real userreal4;
-  real userreal5;
-  real userreal6;
-  real userreal7;
-  real userreal8;
-  real userreal9;
+
+  /* MolDStruct strong-field (SFMD) ionization parameters.  Set in the mdp as
+   * sfmd-*, consumed by src/kernel/md.c.  These replace the userint5-9 /
+   * userreal5-9 slots the module used before 2026-08-23; the whole module is
+   * gated on mdrun -ionize, so there is no separate enable switch. */
+  int  sfmd_autostop;                  /* boolean                          */
+  int  sfmd_detailed_output;           /* boolean                          */
+  int  sfmd_charge_output_stride;      /* steps between charge dumps       */
+  int  sfmd_initial_charges;           /* boolean                          */
+
+  real sfmd_autostop_threshold;        /* E_kin/E_tot ratio                */
+  real sfmd_pulse_peak_time;           /* fs                               */
+  real sfmd_pulse_energy;              /* J                                */
+  real sfmd_pulse_fwhm;                /* fs, full width at half maximum   */
+  real sfmd_pulse_focal_diameter;      /* nm                               */
+  real sfmd_pulse_wavelength;          /* nm                               */
 
   t_grpopts opts;	/* Group options				*/
   t_cosines ex[DIM];	/* Electric field stuff	(spatial part)		*/

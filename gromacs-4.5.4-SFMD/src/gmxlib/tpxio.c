@@ -64,7 +64,17 @@
 #include "mtop_util.h"
 
 /* This number should be increased whenever the file format changes! */
-static const int tpx_version = 73;
+/* 75: MolDStruct strong-field named ionization parameters (sfmd-*) replace
+ * the userint5-9 and userreal5-9 slots this build used to append here.  Those
+ * were written unconditionally while the version stayed at 73, so an SFMD tpr
+ * was indistinguishable from a stock one yet had a different layout.
+ *
+ * 74 is deliberately skipped: the sibling gromacs-mc build uses it for its
+ * own, different mcmd-* layout, and reusing the number would leave the two
+ * MolDStruct codes silently misreading each other's tprs - exactly the bug
+ * this bump exists to fix.  Tprs written by the old build must be
+ * regenerated. */
+static const int tpx_version = 75;
 
 /* This number should only be increased when you edit the TOPOLOGY section
  * of the tpx format. This way we can maintain forward compatibility too
@@ -740,21 +750,38 @@ static void do_inputrec(t_fileio *fio, t_inputrec *ir,gmx_bool bRead,
     gmx_fio_do_int(fio,ir->userint2); 
     gmx_fio_do_int(fio,ir->userint3); 
     gmx_fio_do_int(fio,ir->userint4);
-    gmx_fio_do_int(fio,ir->userint5); 
-    gmx_fio_do_int(fio,ir->userint6); 
-    gmx_fio_do_int(fio,ir->userint7); 
-    gmx_fio_do_int(fio,ir->userint8);
-    gmx_fio_do_int(fio,ir->userint9);
         
     gmx_fio_do_real(fio,ir->userreal1); 
     gmx_fio_do_real(fio,ir->userreal2); 
     gmx_fio_do_real(fio,ir->userreal3); 
     gmx_fio_do_real(fio,ir->userreal4); 
-    gmx_fio_do_real(fio,ir->userreal5); 
-    gmx_fio_do_real(fio,ir->userreal6); 
-    gmx_fio_do_real(fio,ir->userreal7); 
-    gmx_fio_do_real(fio,ir->userreal8); 
-    gmx_fio_do_real(fio,ir->userreal9); 
+
+    /* MolDStruct strong-field ionization parameters.  Guarded so a stock
+     * 4.5.4 tpr still reads; a tpr from the old build cannot be read at all,
+     * since it claimed version 73 while carrying ten extra values here. */
+    if (file_version >= 75) {
+      gmx_fio_do_int(fio,ir->sfmd_autostop);
+      gmx_fio_do_int(fio,ir->sfmd_detailed_output);
+      gmx_fio_do_int(fio,ir->sfmd_charge_output_stride);
+      gmx_fio_do_int(fio,ir->sfmd_initial_charges);
+      gmx_fio_do_real(fio,ir->sfmd_autostop_threshold);
+      gmx_fio_do_real(fio,ir->sfmd_pulse_peak_time);
+      gmx_fio_do_real(fio,ir->sfmd_pulse_energy);
+      gmx_fio_do_real(fio,ir->sfmd_pulse_fwhm);
+      gmx_fio_do_real(fio,ir->sfmd_pulse_focal_diameter);
+      gmx_fio_do_real(fio,ir->sfmd_pulse_wavelength);
+    } else if (bRead) {
+      ir->sfmd_autostop              = 0;
+      ir->sfmd_detailed_output       = 0;
+      ir->sfmd_charge_output_stride  = 50;
+      ir->sfmd_initial_charges       = 0;
+      ir->sfmd_autostop_threshold    = 0.99;
+      ir->sfmd_pulse_peak_time       = 0;
+      ir->sfmd_pulse_energy          = 0;
+      ir->sfmd_pulse_fwhm            = 0;
+      ir->sfmd_pulse_focal_diameter  = 0;
+      ir->sfmd_pulse_wavelength      = 0;
+    } 
     
     /* pull stuff */
     if (file_version >= 48) {

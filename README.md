@@ -35,29 +35,71 @@ If running into problems, try to search the issue as there are many GROMACS reso
 
 ## List of input parameters
 
-The parameters of the model can be set like any other MD parameters in the `.mdp` file and are accessed through the userints and userreals.
-Userints are used to enable/disable certain features while the userreals are used for the physical pulse parameters.
+The model's parameters are set in the `.mdp` file like any other MD
+parameter. They are all named `sfmd-*` and take effect only when `mdrun` is
+given `-ionize`; without that flag the run is unmodified GROMACS 4.5.4
+whatever the `.mdp` says.
+
+**Note the time unit.** `sfmd-pulse-peak-time` and `sfmd-pulse-fwhm` are in
+**femtoseconds**, unlike `dt` and `tinit`, which stay in GROMACS'
+picoseconds, and the width is the **FWHM** rather than the standard
+deviation. Pulses here are tens of fs long, and the templates were already
+converting FWHM to sigma by hand. Output files still use the GROMACS time in
+ps.
 
 ```
-userint1 - (default = 1) Alter forcefield. If set to zero everything should run as unmodified gromacs 4.5.4 (hopefully)
-userint2 - (default = 1) Do charge transfer. Enables the charge transfer module
-userint3 - (default = 0) Autostop simulation once E_kin/E_tot exceeds a threshold (threshold set by userreal6)
-userint4 - (default = 0) Read electronic states from file. Useful for continued sims (Experimental)
-userint5 - (default = 0) Enable logging of electronic dynamics. Big performance drop due to I/O.
-userint6 - (default = 0) Enable collisional ionization. (Not implemented yet). Requires collisional data.
-userint7 - (default = 0, treated as 1) Charge-logging interval in steps: charges_over_time.bin / mean_charge_vs_time.txt are gathered across ranks and flushed every userint7 steps instead of every step.
-userint9 - (default = 0) Read charges from a file. File must be named "charges.txt" and placed in the same directory from where mdrun is called. File consists of two columns, atom index and charge.
-
-userreal1 - Pulse center / peak time [ps]
-userreal2 - (default = 0.0) Pulse energy [J]
-userreal3 - (default = 0.0) Pulse sigma, width of the peak (sigma value of the gaussian) [ps]
-userreal4 - (default = 0.0) Diameter of the focal spot [nm]
-userreal5 - (default = 0.0) Wavelength [nm]
-userreal6 - (default = 0.99) Threshold for energy autostop (userint3)
+sfmd-pulse-peak-time        (default = 0)    Center of the Gaussian pulse [fs]
+sfmd-pulse-fwhm             (default = 0)    Pulse duration, full width at
+                                             half maximum [fs]
+sfmd-pulse-energy           (default = 0)    Pulse energy [J]
+sfmd-pulse-focal-diameter   (default = 0)    Diameter of the focal spot [nm]
+sfmd-pulse-wavelength       (default = 0)    Laser wavelength [nm]
+sfmd-autostop               (default = 0)    Stop once E_kin/E_tot exceeds
+                                             the threshold below
+sfmd-autostop-threshold     (default = 0.99) That threshold
+sfmd-initial-charges        (default = 0)    Read starting charges from
+                                             "charges.txt" in the working
+                                             directory: two columns, atom
+                                             index and charge. Used for
+                                             restart chaining.
+sfmd-detailed-output        (default = 0)    Write the per-step analysis
+                                             output (see below)
+sfmd-charge-output-stride   (default = 50)   Steps between frames in
+                                             charges_over_time.bin
 ```
 
-**Important:** these parameters are only read when `mdrun` is called with the `-ionize` flag.
-The assignment happens inside the ionization block, so without `-ionize` the run behaves as unmodified GROMACS 4.5.4 no matter what the `.mdp` says.
+The `.tpr` format version was raised from 73 to **75** so a stock GROMACS tool would read an SFMD `.tpr` and silently
+misparse everything after `userint4`. 74 is deliberately skipped: the sibling
+gromacs-mc build uses it for its own, different layout, and sharing the
+number would leave the two MolDStruct codes misreading each other's files.
+**Existing `.tpr` files must be regenerated with the new `grompp`**; `.tpr`
+files from stock 4.5.4 still read.
+
+
+### Reproducible runs
+
+The ADK tunnelling draws are seeded from `/dev/random`, so every run is an
+independent realisation - which is what you want for ensemble statistics, and
+why two runs of the byte-identical system diverge almost immediately once
+ionization starts. Setting the environment variable `GMX_SFMD_SEED` pins the
+seed instead:
+
+```
+GMX_SFMD_SEED=12345 mdrun -deffnm explode -nt 4 -pd -ionize
+```
+
+Each rank still gets its own stream (the rank index is mixed into the seed),
+so a pinned run is reproducible **for a given rank count** - the same seed at
+`-nt 1` and `-nt 4` are different realisations, because the ranks own
+different atoms. The seed actually used is printed to the `.log`.
+
+This is what makes the ionization path testable: without it there is no way
+to tell a real change in behaviour from the RNG landing differently.
+
+
+
+
+
 
 ## Running a simulation
 
@@ -77,20 +119,64 @@ All standard GROMACS output like the `.trr`, `.edr`, `.gro`, `.log` and `.cpt` f
 
 ### Additional output
 
-When `userint5` is set to 1, additional output is written to `simulation_output/` (created automatically in the directory `mdrun` is called from):
+When `sfmd-detailed-output` is set to 1, additional output is written to `simulation_output/` (created automatically in the directory `mdrun` is called from):
 
 - **`pulse_profile.txt`** — intensity of the laser pulse at each timestep. Column 1: time [ps]. Column 2: laser intensity.
-- **`mean_charge_vs_time.txt`** — mean charge of the system over time, flushed every `userint7` steps. Column 1: time [ps]. Column 2: mean charge [e].
-- **`charges_over_time.bin`** — per-atom charge, logged in binary, same flush interval as above.
+- **`mean_charge_vs_time.txt`** — mean charge of the system over time, written every step. Column 1: time [ps]. Column 2: mean charge [e].
+- **`charges_over_time.bin`** — per-atom charge, logged in binary, one
+  frame every `sfmd-charge-output-stride` steps (default 50). Frame *k* is
+  step *k* x stride, so take every stride'th row of
+  `mean_charge_vs_time.txt` for the matching times.
 - **`masses.bin`** — per-atom mass, written once.
 - **`transition_log.txt`** — log of ionization/electronic transition events and the time [ps] they occur.
-- **`charges.txt`** — final per-atom charge dump at the end of the run (also the file read back in via `userint9` for restarting/chaining a simulation).
+- **`charges.txt`** — final per-atom charge dump at the end of the run (also the file read back in via `sfmd-initial-charges` for restarting/chaining a simulation).
 
-If you do not need this data, it is recommended to leave `userint5` off, as it cuts into performance.
+If you do not need this data, it is recommended to leave
+`sfmd-detailed-output` off, as it cuts into performance.
 
 ## Example
 
-_(TODO: add a worked example,`.mdp`, `pdb2gmx`/`grompp`/`mdrun` commands, and expected output.)_
+`example/` contains a complete worked run: hen egg-white lysozyme (PDB 1AKI,
+1960 atoms) in vacuum, exploded by a 5 mJ, 5 fs pulse.
+
+```bash
+cd example
+# edit run_example.sh to point at your gromacs bin directory, then
+bash run_example.sh
+```
+
+which is just:
+
+```bash
+pdb2gmx -f 1aki.pdb -ff "charmm27" -water none
+grompp  -f exp.mdp -c conf.gro -p topol.top -o explode.tpr
+mdrun   -deffnm explode -v -nt 1 -ionize
+```
+
+Add `-pd` and raise `-nt` to use more cores
+(`-nt 8 -pd`) - `-pd` is required whenever `-nt` > 1, because domain
+decomposition cannot follow the explosion.
+
+20000 steps at dt = 1 as covers 20 fs, with the pulse peaking at 10 fs. On a
+completed run every atom ends up at least singly charged:
+
+```
+min 1   mean 2.83   max 6   neutral atoms: 0/1960
+  1+ : 959     every hydrogen, which has only one electron to lose
+  4+ : 613
+  5+ : 193
+  6+ : 195
+```
+
+Nothing is left at 2+ or 3+: at this intensity the heavy atoms pass through
+the lower charge states almost immediately. The exact numbers vary run to run,
+because the ADK draws are unseeded by default - set `GMX_SFMD_SEED` to pin
+them. The pulse energy is not delicately tuned: full ionization sets in around
+1e-4 J for this system, so the 5 mJ used here is roughly fifty times over
+threshold and deep into saturation, where raising it further changes nothing.
+
+Output lands in `simulation_output/` (see above); `charges.txt` holds the final
+per-atom charges.
 
 ## Limitations
 
@@ -105,3 +191,24 @@ Multithreaded runs require `-pd` rather than the default domain decomposition (s
 ### Compatibility
 
 Has only been tested on Linux systems.
+
+### Renamed parameters
+
+Old legacy parameters, does not work anymore, kept here for reference. `grompp`
+rejects an `.mdp` that still uses the old names and prints the replacement
+for each one, because several changed meaning as well as name:
+
+| old | new |
+|---|---|
+| `userint1` | removed - `-ionize` alone enables the altered force field |
+| `userint2`, `userint4`, `userint6` | removed  |
+| `userint3` | `sfmd-autostop` |
+| `userint5` | `sfmd-detailed-output` |
+| `userint7` | `sfmd-charge-output-stride` - **not the same knob**, see below |
+| `userint9` | `sfmd-initial-charges` |
+| `userreal1` | `sfmd-pulse-peak-time` - **now fs**, multiply by 1000 |
+| `userreal2` | `sfmd-pulse-energy` |
+| `userreal3` | `sfmd-pulse-fwhm` - **now the FWHM in fs**, multiply by 2354.82 |
+| `userreal4` | `sfmd-pulse-focal-diameter` |
+| `userreal5` | `sfmd-pulse-wavelength` |
+| `userreal6` | `sfmd-autostop-threshold` |

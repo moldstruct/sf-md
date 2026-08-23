@@ -672,21 +672,23 @@ void pr_inputrec(FILE *fp,int indent,const char *title,t_inputrec *ir,
     PI("userint2",ir->userint2);
     PI("userint3",ir->userint3);
     PI("userint4",ir->userint4);
-    PI("userint5",ir->userint5);
-    PI("userint6",ir->userint6);
-    PI("userint7",ir->userint7);
-    PI("userint8",ir->userint8);
-    PI("userint9",ir->userint9);
     
     PR("userreal1",ir->userreal1);
     PR("userreal2",ir->userreal2);
     PR("userreal3",ir->userreal3);
     PR("userreal4",ir->userreal4);
-    PR("userreal5",ir->userreal5);
-    PR("userreal6",ir->userreal6);
-    PR("userreal7",ir->userreal7);
-    PR("userreal8",ir->userreal8);
-    PR("userreal8",ir->userreal9);
+
+    /* MolDStruct strong-field ionization parameters */
+    PR("sfmd-pulse-peak-time",ir->sfmd_pulse_peak_time);
+    PR("sfmd-pulse-fwhm",ir->sfmd_pulse_fwhm);
+    PR("sfmd-pulse-energy",ir->sfmd_pulse_energy);
+    PR("sfmd-pulse-focal-diameter",ir->sfmd_pulse_focal_diameter);
+    PR("sfmd-pulse-wavelength",ir->sfmd_pulse_wavelength);
+    PI("sfmd-autostop",ir->sfmd_autostop);
+    PR("sfmd-autostop-threshold",ir->sfmd_autostop_threshold);
+    PI("sfmd-initial-charges",ir->sfmd_initial_charges);
+    PI("sfmd-detailed-output",ir->sfmd_detailed_output);
+    PI("sfmd-charge-output-stride",ir->sfmd_charge_output_stride);
     
     pr_grp_opts(fp,indent,"grpopts",&(ir->opts),bMDPformat);
     pr_cosine(fp,indent,"efield-x",&(ir->ex[XX]),bMDPformat);

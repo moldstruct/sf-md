@@ -1,0 +1,9 @@
+# Path to gromacs bin (Change to install location)
+path='/path/to/gromacs/bin'
+
+$path/pdb2gmx -f 1aki.pdb -ff "charmm27" -water none
+
+# Configure and run explosion sim
+$path/grompp -f exp.mdp -c conf.gro -p topol.top -o explode.tpr
+# Add "-pd" and raise -nt to run on more than one core, e.g. -nt 8 -pd
+$path/mdrun -deffnm explode -v -nt 1 -ionize

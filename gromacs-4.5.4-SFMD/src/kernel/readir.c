@@ -800,6 +800,128 @@ static void add_wall_energrps(gmx_groups_t *groups,int nwall,t_symtab *symtab)
   }
 }
 
+/* The strong-field ionization parameters used to live in the generic
+ * userint5-9 and userreal5-9 slots.  Renaming them silently would be
+ * dangerous: an old mdp still parses, the old names are simply ignored, and
+ * the run proceeds on default ionization settings that look plausible in the
+ * log.  Worse, two of them changed meaning as well as name - the pulse times
+ * are now femtoseconds, and the width is the FWHM where userreal3 was the
+ * standard deviation in picoseconds, a factor of 2354.8 - so a mechanical
+ * rename without conversion gives a pulse three orders of magnitude too
+ * short.  Refuse the file and say what each entry became.  A warning would
+ * not do: the run scripts pass -maxwarn, which would swallow it. */
+static void check_sfmd_legacy_entries(int ninp, t_inpfile *inp)
+{
+    static const char *legacy[][2] = {
+        { "userint1", "removed - the altered force field is now enabled by "
+                      "'mdrun -ionize' alone" },
+        { "userint2", "removed - never read by this build" },
+        { "userint3", "sfmd-autostop" },
+        { "userint4", "removed - never read by this build" },
+        { "userint5", "sfmd-detailed-output" },
+        { "userint6", "removed - never read by this build" },
+        { "userint7", "sfmd-charge-output-stride, WHICH IS NOT THE SAME: it "
+                      "writes only every Nth step to charges_over_time.bin, "
+                      "where userint7 batched the writes but kept every step" },
+        { "userint9", "sfmd-initial-charges" },
+        { "userreal1", "sfmd-pulse-peak-time, IN FEMTOSECONDS (was ps): "
+                       "multiply the old value by 1000" },
+        { "userreal2", "sfmd-pulse-energy" },
+        { "userreal3", "sfmd-pulse-fwhm, THE FWHM IN FEMTOSECONDS (was the "
+                       "standard deviation in ps): multiply the old value by "
+                       "2354.82" },
+        { "userreal4", "sfmd-pulse-focal-diameter" },
+        { "userreal5", "sfmd-pulse-wavelength" },
+        { "userreal6", "sfmd-autostop-threshold" },
+        { NULL, NULL }
+    };
+    int  i, k;
+    char found[4096];
+    int  nfound = 0;
+
+    found[0] = '\0';
+
+    for (k = 0; legacy[k][0] != NULL; k++)
+    {
+        for (i = 0; i < ninp; i++)
+        {
+            if (gmx_strcasecmp_min(legacy[k][0], inp[i].name) == 0)
+            {
+                if (strlen(found) + strlen(legacy[k][0]) +
+                    strlen(legacy[k][1]) + 8 < sizeof(found))
+                {
+                    strcat(found, "  ");
+                    strcat(found, legacy[k][0]);
+                    strcat(found, " -> ");
+                    strcat(found, legacy[k][1]);
+                    strcat(found, "\n");
+                }
+                nfound++;
+                break;
+            }
+        }
+    }
+
+    if (nfound > 0)
+    {
+        gmx_fatal(FARGS,
+                  "This mdp file uses the old MolDStruct parameter names, "
+                  "which were replaced by named sfmd-* options.  Update it:\n"
+                  "%s\n"
+                  "Note the unit changes on the pulse parameters - a "
+                  "mechanical rename will give the wrong pulse.  See the "
+                  "'Parameters' section of the MolDStruct README.",
+                  found);
+    }
+}
+
+/* Reject a misspelled sfmd-* option rather than letting it fall silently back
+ * to its default.  GROMACS notices unread mdp entries, but only as a warning
+ * from write_inpfile(), and the run scripts pass -maxwarn, so it is
+ * swallowed.  These options set the physics: a typo in the pulse energy would
+ * quietly produce no ionization at all.
+ *
+ * Must run after the get_e*() calls, which is what sets bSet. */
+static void check_sfmd_unknown_entries(int ninp, t_inpfile *inp)
+{
+    static const char *known[] = {
+        "sfmd-pulse-peak-time", "sfmd-pulse-fwhm", "sfmd-pulse-energy",
+        "sfmd-pulse-focal-diameter", "sfmd-pulse-wavelength",
+        "sfmd-autostop", "sfmd-autostop-threshold", "sfmd-initial-charges",
+        "sfmd-detailed-output", "sfmd-charge-output-stride",
+        NULL
+    };
+    int  i, k;
+    char list[1024];
+
+    for (i = 0; i < ninp; i++)
+    {
+        if (inp[i].bSet || inp[i].bObsolete || inp[i].name == NULL)
+        {
+            continue;
+        }
+        if (gmx_strncasecmp(inp[i].name, "sfmd-", 5) != 0)
+        {
+            continue;   /* not ours; the generic warning still applies */
+        }
+
+        list[0] = '\0';
+        for (k = 0; known[k] != NULL; k++)
+        {
+            if (strlen(list) + strlen(known[k]) + 4 < sizeof(list))
+            {
+                strcat(list, "  ");
+                strcat(list, known[k]);
+                strcat(list, "\n");
+            }
+        }
+        gmx_fatal(FARGS,
+                  "Unknown MolDStruct option '%s' in the mdp file. The "
+                  "recognised ones are:\n%s",
+                  inp[i].name, list);
+    }
+}
+
 void get_ir(const char *mdparin,const char *mdparout,
             t_inputrec *ir,t_gromppopts *opts,
             warninp_t wi)
@@ -812,6 +934,12 @@ void get_ir(const char *mdparin,const char *mdparout,
   char      warn_buf[STRLEN];
   
   inp = read_inpfile(mdparin, &ninp, NULL, wi);
+
+  /* Must run here, against what the file actually contains: the get_e*()
+   * calls below insert every registered option into inp with its default, so
+   * after them userint1-4 are always present whether the user wrote them or
+   * not. */
+  check_sfmd_legacy_entries(ninp, inp);
 
   snew(dumstr[0],STRLEN);
   snew(dumstr[1],STRLEN);
@@ -1151,26 +1279,34 @@ void get_ir(const char *mdparin,const char *mdparout,
   STYPE ("user1-grps",  user1,          NULL);
   STYPE ("user2-grps",  user2,          NULL);
 
-  ITYPE ("userint1",    ir->userint1,   1); // Enable altererd forcefields 
-  ITYPE ("userint2",    ir->userint2,   1); // Do charge transfer
-  ITYPE ("userint3",    ir->userint3,   0); // Enable stopping when threshgold is reached (userreal6)
-  ITYPE ("userint4",    ir->userint4,   0); // Read states from previous sim
-  ITYPE ("userint5",    ir->userint5,   0); // Enable logging
-  ITYPE ("userint6",    ir->userint6,   0); // Enable collsional ionization (Not implemented)
-  ITYPE ("userint7",    ir->userint7,   0); // FREE
-  ITYPE ("userint8",    ir->userint8,   0); // FREE
-  ITYPE ("userint9",    ir->userint9,   0); // Read charges from file
+  ITYPE ("userint1",    ir->userint1,   0);
+  ITYPE ("userint2",    ir->userint2,   0);
+  ITYPE ("userint3",    ir->userint3,   0);
+  ITYPE ("userint4",    ir->userint4,   0);
+  RTYPE ("userreal1",   ir->userreal1,  0);
+  RTYPE ("userreal2",   ir->userreal2,  0);
+  RTYPE ("userreal3",   ir->userreal3,  0);
+  RTYPE ("userreal4",   ir->userreal4,  0);
 
+  /* MolDStruct strong-field ionization.  These only take effect when mdrun is
+   * given -ionize, which also enables the altered force field; without it the
+   * run is unmodified GROMACS 4.5.4.  Pulse times are in femtoseconds, unlike
+   * the rest of the mdp, because the pulses are tens of fs long. */
+  CCTYPE ("MOLDSTRUCT STRONG-FIELD IONIZATION (mdrun -ionize)");
+  RTYPE ("sfmd-pulse-peak-time",       ir->sfmd_pulse_peak_time,       0);
+  RTYPE ("sfmd-pulse-fwhm",            ir->sfmd_pulse_fwhm,            0);
+  RTYPE ("sfmd-pulse-energy",          ir->sfmd_pulse_energy,          0);
+  RTYPE ("sfmd-pulse-focal-diameter",  ir->sfmd_pulse_focal_diameter,  0);
+  RTYPE ("sfmd-pulse-wavelength",      ir->sfmd_pulse_wavelength,      0);
+  ITYPE ("sfmd-autostop",              ir->sfmd_autostop,              0);
+  RTYPE ("sfmd-autostop-threshold",    ir->sfmd_autostop_threshold,    0.99);
+  ITYPE ("sfmd-initial-charges",       ir->sfmd_initial_charges,       0);
+  ITYPE ("sfmd-detailed-output",       ir->sfmd_detailed_output,       0);
+  ITYPE ("sfmd-charge-output-stride",  ir->sfmd_charge_output_stride,  50);
 
-  RTYPE ("userreal1",   ir->userreal1,  0); // Gaussian peak in ps
-  RTYPE ("userreal2",   ir->userreal2,  0); // Number of photons
-  RTYPE ("userreal3",   ir->userreal3,  0); // Sigma value of gaussian
-  RTYPE ("userreal4",   ir->userreal4,  0); // Focal diamater
-  RTYPE ("userreal5",   ir->userreal5,  0); // Photon energy
-  RTYPE ("userreal6",   ir->userreal6,  0.99); // Threshold for stopping sim. userint3 must be turned on.
-  RTYPE ("userreal7",   ir->userreal7,  0);
-  RTYPE ("userreal8",   ir->userreal8,  0);
-  RTYPE ("userreal9",   ir->userreal9,  0);
+  /* Every sfmd-* option has now been read out, so anything still unread and
+   * carrying that prefix is a typo. */
+  check_sfmd_unknown_entries(ninp, inp);
 
 
 #undef CTYPE
