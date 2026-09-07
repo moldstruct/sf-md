@@ -61,6 +61,11 @@ extern int moldstruct_altered_ff;
 #define MASS_NI 59
 #define MASS_I 127
 
+/* Deuterium.  Not an element of its own here: it is chemically hydrogen and
+ * has hydrogen's electronic structure, so it ionizes with hydrogen's ADK
+ * parameters.  See species_mass() below. */
+#define MASS_D 2
+
 typedef struct
 {
     int mass;
@@ -120,6 +125,23 @@ char *mass2char(int mass)
         }
     }
     return "_";
+}
+
+/* Species identifier for an atom of mass m [amu].  Everything downstream --
+ * the ADK parameter tables, the ionization potentials, mass2char() -- keys off
+ * this rather than off the raw mass, so this is the one place isotopes are
+ * folded onto their element.
+ *
+ * Deuterium is mapped onto hydrogen.  Only the species identity is remapped;
+ * mdatoms->massT keeps the real mass 2, so the dynamics are untouched and a
+ * deuteron still recoils at its own mass.  Without this a deuterium atom
+ * matches no entry in the ADK table and try_adk_ionization_precomputed()
+ * silently never ionizes it. */
+static int species_mass(real m)
+{
+    int mass = (int)round(m);
+
+    return (mass == MASS_D) ? MASS_H : mass;
 }
 
 //////////////////////////////////////////////////////////////////////////////////////
@@ -1145,7 +1167,7 @@ static IonizeStepStats do_ionize_step(t_mdatoms *mdatoms,
                 int charge;
                 IonizationTrial trial;
 
-                mass = (int)round(mdatoms->massT[i]);
+                mass = species_mass(mdatoms->massT[i]);
                 charge = (int)round(mdatoms->chargeA[i]);
 
                 trial = try_adk_ionization_precomputed(
