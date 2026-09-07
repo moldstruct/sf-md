@@ -1464,14 +1464,17 @@ t_sfionize *sfionize_init(FILE *fplog, const t_inputrec *ir,
      * this function already means -ionize was given.  The per-step text files
      * are truncated later, by ionize_first_step_init().
      *
-     * charge_buf must exist on every rank: each fills its own local slice
-     * before flush_charge_window() gathers them onto MASTER. */
-    snew(sf->charge_buf, mdatoms->nr);
-
+     * NOTE nothing sized by the atom count can be set up here: do_md() calls
+     * sfionize_init() before atoms2md() has populated mdatoms, so mdatoms->nr
+     * is still 0.  Both such things -- charge_buf and the masses.bin dump --
+     * are done on the first step instead, by sfionize_first_step_alloc().
+     * Doing them here wrote an empty masses.bin and left charge_buf NULL,
+     * which the guard in do_ionize_step() then read as "logging off", so
+     * charges_over_time.bin came out empty too.  All three failures were
+     * silent. */
     if (MASTER(cr))
     {
         struct stat st = {0};
-        FILE       *fmasses;
 
         if (stat("./simulation_output", &st) == -1 &&
             mkdir("./simulation_output", 0700) != 0)
@@ -1486,8 +1489,28 @@ t_sfionize *sfionize_init(FILE *fplog, const t_inputrec *ir,
             gmx_fatal(FARGS,
                       "Could not open 'charges_over_time.bin' for writing.");
         }
+    }
 
-        fmasses = fopen("./simulation_output/masses.bin", "wb");
+    return sf;
+}
+
+/* Everything whose size depends on the atom count.  Called on the first step,
+ * once atoms2md() has filled mdatoms in -- see the note in sfionize_init().
+ *
+ * charge_buf must exist on every rank: each fills its own local slice before
+ * flush_charge_window() gathers them onto MASTER. */
+static void sfionize_first_step_alloc(t_sfionize *sf, t_mdatoms *mdatoms,
+                                      const t_commrec *cr)
+{
+    if (sf->charge_buf == NULL)
+    {
+        snew(sf->charge_buf, mdatoms->nr);
+    }
+
+    if (MASTER(cr))
+    {
+        FILE *fmasses = fopen("./simulation_output/masses.bin", "wb");
+
         if (fmasses == NULL)
         {
             gmx_fatal(FARGS, "Could not open 'masses.bin' for writing.");
@@ -1495,8 +1518,6 @@ t_sfionize *sfionize_init(FILE *fplog, const t_inputrec *ir,
         fwrite(mdatoms->massT, sizeof(mdatoms->massT[0]), mdatoms->nr, fmasses);
         fclose(fmasses);
     }
-
-    return sf;
 }
 
 void sfionize_step(t_sfionize *sf, const t_inputrec *ir, t_mdatoms *mdatoms,
@@ -1510,10 +1531,14 @@ void sfionize_step(t_sfionize *sf, const t_inputrec *ir, t_mdatoms *mdatoms,
         return;
     }
 
-    if (bFirstStep &&
-        ionize_first_step_init(mdatoms, ir->sfmd_initial_charges, cr))
+    if (bFirstStep)
     {
-        gmx_fatal(FARGS, "Could not initialise the ionization charges.");
+        sfionize_first_step_alloc(sf, mdatoms, cr);
+
+        if (ionize_first_step_init(mdatoms, ir->sfmd_initial_charges, cr))
+        {
+            gmx_fatal(FARGS, "Could not initialise the ionization charges.");
+        }
     }
 
     stats = do_ionize_step(mdatoms, &sf->laser, &sf->adk_table, t,
