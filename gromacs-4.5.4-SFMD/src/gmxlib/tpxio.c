@@ -73,8 +73,30 @@
  * own, different mcmd-* layout, and reusing the number would leave the two
  * MolDStruct codes silently misreading each other's tprs - exactly the bug
  * this bump exists to fix.  Tprs written by the old build must be
- * regenerated. */
-static const int tpx_version = 75;
+ * regenerated.
+ *
+ * 175: the trapped-electron cloud (sfmd-electrons, sfmd-pb-*,
+ * sfmd-evaporation).  Jumps clear of gromacs-mc, which numbers its layouts
+ * from 74 upwards (80 in November 2026) and reads any version >= 74 as its
+ * own: a 175 tpr is "too new" there and refused, instead of misread.  This
+ * reader in turn refuses 74 and 76..174 (do_tpxheader), which are
+ * gromacs-mc layouts or unassigned, and reads 75 with the cloud off.
+ *
+ * 176: sfmd-laser-barrier (175 reads with it off).
+ * 177: sfmd-laser-heating, sfmd-heating-nu-cap (older: heating off).
+ * 178: sfmd-collisions (older: off).
+ * 179: sfmd-coll-recombination (older: off).
+ * 180: sfmd-heating-shape (older: sphere).
+ * 181: sfmd-heating-surface (older: 0, off).
+ * 182: sfmd-te-min (older: 0, the old model).
+ * 183: sfmd-autostop = 2 (ion directions settled): sfmd-autostop-angle, -interval, -min-time.
+ * 184: sfmd-schedule (step size and PB interval changed at given times during the run).
+ * 185: sfmd-laser-polarization (older: 0, no direction). */
+static const int tpx_version = 185;
+
+/* Versions between the sf layouts that this build must not read as its own:
+ * 74 and 76..174 (gromacs-mc uses 74..80 so far). */
+#define SFMD_TPX_IS_FOREIGN(v) ((v) == 74 || ((v) >= 76 && (v) < 175))
 
 /* This number should only be increased when you edit the TOPOLOGY section
  * of the tpx format. This way we can maintain forward compatibility too
@@ -764,7 +786,7 @@ static void do_inputrec(t_fileio *fio, t_inputrec *ir,gmx_bool bRead,
       gmx_fio_do_int(fio,ir->sfmd_detailed_output);
       gmx_fio_do_int(fio,ir->sfmd_charge_output_stride);
       gmx_fio_do_int(fio,ir->sfmd_initial_charges);
-      gmx_fio_do_real(fio,ir->sfmd_autostop_threshold);
+      gmx_fio_do_real(fio,ir->sfmd_autostop_energy_ratio);
       gmx_fio_do_real(fio,ir->sfmd_pulse_peak_time);
       gmx_fio_do_real(fio,ir->sfmd_pulse_energy);
       gmx_fio_do_real(fio,ir->sfmd_pulse_fwhm);
@@ -775,13 +797,107 @@ static void do_inputrec(t_fileio *fio, t_inputrec *ir,gmx_bool bRead,
       ir->sfmd_detailed_output       = 0;
       ir->sfmd_charge_output_stride  = 50;
       ir->sfmd_initial_charges       = 0;
-      ir->sfmd_autostop_threshold    = 0.99;
+      ir->sfmd_autostop_energy_ratio    = 0.99;
       ir->sfmd_pulse_peak_time       = 0;
       ir->sfmd_pulse_energy          = 0;
       ir->sfmd_pulse_fwhm            = 0;
       ir->sfmd_pulse_focal_diameter  = 0;
       ir->sfmd_pulse_wavelength      = 0;
-    } 
+    }
+
+    /* The trapped-electron cloud (175).  Older tprs run without it. */
+    if (file_version >= 175) {
+      gmx_fio_do_int(fio,ir->sfmd_electrons);
+      gmx_fio_do_int(fio,ir->sfmd_pb_long_range);
+      gmx_fio_do_int(fio,ir->sfmd_evaporation);
+      gmx_fio_do_int(fio,ir->sfmd_pb_grid_limit);
+      gmx_fio_do_real(fio,ir->sfmd_pb_interval);
+      gmx_fio_do_real(fio,ir->sfmd_pb_smoothing);
+      gmx_fio_do_real(fio,ir->sfmd_pb_box_cut);
+      gmx_fio_do_real(fio,ir->sfmd_pb_newton_tol);
+      gmx_fio_do_real(fio,ir->sfmd_pb_cells_per_smoothing);
+      gmx_fio_do_real(fio,ir->sfmd_pb_box_max);
+    } else if (bRead) {
+      ir->sfmd_electrons              = 0;
+      ir->sfmd_pb_long_range          = 0;
+      ir->sfmd_evaporation            = 1;
+      ir->sfmd_pb_grid_limit          = 384;
+      ir->sfmd_pb_interval            = 0.2;
+      ir->sfmd_pb_smoothing           = 0.25;
+      ir->sfmd_pb_box_cut             = 0.02;
+      ir->sfmd_pb_newton_tol          = 1e-2;
+      ir->sfmd_pb_cells_per_smoothing = 2.5;
+      ir->sfmd_pb_box_max             = 3;
+    }
+    if (file_version >= 176) {
+      gmx_fio_do_int(fio,ir->sfmd_laser_barrier);
+    } else if (bRead) {
+      ir->sfmd_laser_barrier = 0;
+    }
+    if (file_version >= 177) {
+      gmx_fio_do_int(fio,ir->sfmd_laser_heating);
+      gmx_fio_do_real(fio,ir->sfmd_heating_nu_cap);
+    } else if (bRead) {
+      ir->sfmd_laser_heating  = 0;
+      ir->sfmd_heating_nu_cap = 1.0;
+    }
+    if (file_version >= 178) {
+      gmx_fio_do_int(fio,ir->sfmd_collisions);
+    } else if (bRead) {
+      ir->sfmd_collisions = 0;
+    }
+    if (file_version >= 179) {
+      gmx_fio_do_int(fio,ir->sfmd_coll_recombination);
+    } else if (bRead) {
+      ir->sfmd_coll_recombination = 0;
+    }
+    if (file_version >= 180) {
+      gmx_fio_do_int(fio,ir->sfmd_heating_shape);
+    } else if (bRead) {
+      ir->sfmd_heating_shape = 0;
+    }
+    if (file_version >= 181) {
+      gmx_fio_do_real(fio,ir->sfmd_heating_surface);
+    } else if (bRead) {
+      ir->sfmd_heating_surface = 0;
+    }
+    if (file_version >= 182) {
+      gmx_fio_do_real(fio,ir->sfmd_te_min);
+    } else if (bRead) {
+      ir->sfmd_te_min = 0;
+    }
+    /* Added in version 183; before it sfmd-autostop was a boolean, so any
+     * nonzero value is the energy stop (1) */
+    if (file_version >= 183) {
+      gmx_fio_do_real(fio,ir->sfmd_autostop_angle);
+      gmx_fio_do_real(fio,ir->sfmd_autostop_interval);
+      gmx_fio_do_real(fio,ir->sfmd_autostop_min_time);
+    } else if (bRead) {
+      if (ir->sfmd_autostop != 0) { ir->sfmd_autostop = 1; }
+      ir->sfmd_autostop_angle    = 2;
+      ir->sfmd_autostop_interval = 5;
+      ir->sfmd_autostop_min_time = 60;
+    }
+    /* Added in version 184: sfmd-schedule; an older tpr runs with one step size (no schedule) */
+    if (file_version >= 184) {
+      int k;
+      gmx_fio_do_int(fio,ir->sfmd_sched_n);
+      if (ir->sfmd_sched_n < 0 || ir->sfmd_sched_n > SFMD_SCHED_MAX)
+        gmx_fatal(FARGS,"sfmd-schedule in the tpr has %d entries (at most %d)",ir->sfmd_sched_n,SFMD_SCHED_MAX);
+      for (k = 0; k < ir->sfmd_sched_n; k++) {
+        gmx_fio_do_real(fio,ir->sfmd_sched_t[k]);
+        gmx_fio_do_real(fio,ir->sfmd_sched_dt[k]);
+        gmx_fio_do_real(fio,ir->sfmd_sched_pb[k]);
+      }
+    } else if (bRead) {
+      ir->sfmd_sched_n = 0;
+    }
+    /* Added in version 185: sfmd-laser-polarization; older: 0, the laser without a direction */
+    if (file_version >= 185) {
+      gmx_fio_do_int(fio,ir->sfmd_laser_polarization);
+    } else if (bRead) {
+      ir->sfmd_laser_polarization = 0;
+    }
     
     /* pull stuff */
     if (file_version >= 48) {
@@ -2047,6 +2163,16 @@ static void do_tpxheader(t_fileio *fio,gmx_bool bRead,t_tpxheader *tpx,
       (fgen > tpx_generation))
     gmx_fatal(FARGS,"reading tpx file (%s) version %d with version %d program",
 		gmx_fio_getname(fio),fver,tpx_version);
+
+  /* Always, even for topology-only reads: past the topology the layout is
+   * different, and a misread there is silent. */
+  if (SFMD_TPX_IS_FOREIGN(fver))
+    gmx_fatal(FARGS,"tpx file %s has version %d, which is not a gromacs-sf "
+              "(strong-field MolDStruct) layout: most likely it was written by "
+              "gromacs-mc (versions 74 and 76-80 so far), whose inputrec this "
+              "build would misread.  Use the tools of the build that wrote it, "
+              "or regenerate the tpr with this build's grompp.",
+              gmx_fio_getname(fio),fver);
   
   do_section(fio,eitemHEADER,bRead);
   gmx_fio_do_int(fio,tpx->natoms);

@@ -57,6 +57,9 @@ typedef struct {
   real sigma;           /* Width of the Gaussian pulse (FWHM) (ps)      */
 } t_efield;
 
+/* sfmd-schedule: at most this many stages after the first (dt, sfmd-pb-interval) */
+#define SFMD_SCHED_MAX 16
+
 #define EGP_EXCL  (1<<0)
 #define EGP_TABLE (1<<1)
 
@@ -282,17 +285,59 @@ typedef struct {
    * sfmd-*, consumed by src/kernel/md.c.  These replace the userint5-9 /
    * userreal5-9 slots the module used before 2026-08-23; the whole module is
    * gated on mdrun -ionize, so there is no separate enable switch. */
-  int  sfmd_autostop;                  /* boolean                          */
+  int  sfmd_autostop;                  /* 0 off, 1 E_kin/E_tot, 2 ion directions settled (tpr 183) */
   int  sfmd_detailed_output;           /* boolean                          */
   int  sfmd_charge_output_stride;      /* steps between charge dumps       */
   int  sfmd_initial_charges;           /* boolean                          */
 
-  real sfmd_autostop_threshold;        /* E_kin/E_tot ratio                */
+  real sfmd_autostop_energy_ratio;        /* E_kin/E_tot ratio                */
   real sfmd_pulse_peak_time;           /* fs                               */
   real sfmd_pulse_energy;              /* J                                */
   real sfmd_pulse_fwhm;                /* fs, full width at half maximum   */
   real sfmd_pulse_focal_diameter;      /* nm                               */
   real sfmd_pulse_wavelength;          /* nm                               */
+
+  /* The trapped electrons (Poisson-Boltzmann electron cloud), ported from
+   * gromacs-mc's mcmd-electrons = pbgrid (tpr 175).  Same meanings and
+   * defaults as there, except that the cloud is off by default. */
+  int  sfmd_electrons;                 /* 0 none, 1 pbgrid                 */
+  int  sfmd_pb_long_range;             /* boolean, ion-ion beyond rcoulomb from the grid;
+                                          -1 (auto) only between get_ir and grompp */
+  int  sfmd_evaporation;               /* boolean                          */
+  int  sfmd_pb_grid_limit;             /* most grid cells per side         */
+  real sfmd_pb_interval;               /* fs between PB solves             */
+  real sfmd_pb_smoothing;              /* nm, charge smoothing s_e         */
+  real sfmd_pb_box_cut;                /* electrons allowed outside the grid box */
+  real sfmd_pb_newton_tol;             /* Newton tolerance, relative residual */
+  real sfmd_pb_cells_per_smoothing;    /* target spacing = s_e / this at R0 */
+  real sfmd_pb_box_max;                /* largest grid half-width, in R    */
+  int  sfmd_laser_barrier;             /* boolean, the laser lowers the cloud's
+                                          escape level by 2 sqrt(k Q e E0) (tpr 176) */
+  int  sfmd_laser_heating;             /* boolean, inverse-bremsstrahlung heating of the
+                                          cloud, Drude sphere (tpr 177)    */
+  real sfmd_heating_nu_cap;            /* collision rate capped at this x omega_p; 0 = no cap */
+  real sfmd_heating_surface;           /* surface (Kreibig) damping nu_s = A vbar / R added
+                                          to nu_ei, A; 0 = off (tpr 181)   */
+  real sfmd_te_min;                   /* eV: cloud temperature floor of the PB solve, evaporation
+                                          and recombination (E_kin no longer clamped at 0);
+                                          0 = the old model, solve floor 1 eV (tpr 182) */
+  real sfmd_autostop_angle;           /* deg: predicted remaining median heavy-ion turn (autostop 2) */
+  real sfmd_autostop_interval;        /* fs between direction checks      */
+  real sfmd_autostop_min_time;        /* fs after the pulse peak before a stop is allowed */
+  /* tpr version 184: sfmd-schedule, step size and PB interval changed during the run */
+  int  sfmd_sched_n;                   /* entries, 0 = no schedule        */
+  real sfmd_sched_t[SFMD_SCHED_MAX];   /* fs: the stage starts at this time */
+  real sfmd_sched_dt[SFMD_SCHED_MAX];  /* fs: its MD step                  */
+  real sfmd_sched_pb[SFMD_SCHED_MAX];  /* fs: its sfmd-pb-interval         */
+  int  sfmd_heating_shape;             /* 0 sphere, 1 ellipsoid (depolarization factors of
+                                          the sample ellipsoid, orientation-averaged; tpr 180) */
+  int  sfmd_collisions;                /* boolean, electron-impact ionization by the cloud,
+                                          Lotz (tpr 178)                   */
+  int  sfmd_coll_recombination;             /* boolean, three-body recombination in the cloud,
+                                          detailed balance of Lotz (tpr 179) */
+  int  sfmd_laser_polarization;      /* 0 off (the cycle-averaged, direction-free barrier);
+                                          1, 2, 3: linear polarization along x, y, z, the
+                                          instantaneous field in the PB solve (tpr 185) */
 
   t_grpopts opts;	/* Group options				*/
   t_cosines ex[DIM];	/* Electric field stuff	(spatial part)		*/

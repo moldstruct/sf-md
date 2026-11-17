@@ -99,6 +99,9 @@ extern void check_chargegroup_radii(const gmx_mtop_t *mtop,const t_inputrec *ir,
 				    warninp_t wi);
 /* Even more checks, charge group radii vs. cut-off's only. */
 
+extern void sfmd_resolve_long_range(t_inputrec *ir, int natoms, warninp_t wi);
+/* Resolve sfmd-pb-long-range = auto from the atom count (MolDStruct). */
+
 extern void get_ir(const char *mdparin,const char *mdparout,
 		   t_inputrec *ir,t_gromppopts *opts,
 		   warninp_t wi);

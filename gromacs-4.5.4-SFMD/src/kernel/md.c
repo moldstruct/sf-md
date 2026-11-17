@@ -1125,6 +1125,30 @@ static void rerun_parallel_comm(t_commrec *cr, t_trxframe *fr,
     }
 }
 
+/* sfmd-schedule: the step-counted intervals of stage k at its step, from
+ * their values at the tpr's step dt0 (nst0: nstlist, nstcalcenergy,
+ * nstenergy, nstlog, nstcomm, nstxout, nstvout, nstfout, nstxtcout), so that
+ * they stay the same in time.  0 (off) stays 0.  (gromacs-mc's
+ * mcmd_sched_set_ir.) */
+#define SFMD_SCHED_NNST 9
+static void sfmd_sched_set_ir(t_inputrec *ir, int k, double dt0, const int *nst0)
+{
+    int   *nst[SFMD_SCHED_NNST];
+    double r;
+    int    i, n;
+
+    nst[0] = &ir->nstlist; nst[1] = &ir->nstcalcenergy; nst[2] = &ir->nstenergy;
+    nst[3] = &ir->nstlog;  nst[4] = &ir->nstcomm;       nst[5] = &ir->nstxout;
+    nst[6] = &ir->nstvout; nst[7] = &ir->nstfout;       nst[8] = &ir->nstxtcout;
+    ir->delta_t = sfmd_sched_dt(ir, k, dt0);
+    r           = dt0 / ir->delta_t;
+    for (i = 0; i < SFMD_SCHED_NNST; i++)
+    {
+        n       = (int)floor(nst0[i] * r + 0.5);
+        *nst[i] = (nst0[i] <= 0) ? nst0[i] : (n < 1 ? 1 : n);
+    }
+}
+
 /* Seed for the ADK-tunnelling RNG.
  *
  * By default this is gmx_rng_make_seed(), which pulls from /dev/random, so
@@ -1247,6 +1271,14 @@ double do_md(FILE *fplog, t_commrec *cr, int nfile, const t_filenm fnm[],
 
     /* MolDStruct strong-field ionization; NULL without -ionize. */
     t_sfionize *sfion = NULL;
+    /* sfmd-schedule (with -ionize): current stage, its first step and start
+     * time (ps), the tpr's step and step-counted intervals, -gcom as given;
+     * sched_k0: the stage's first step counted in its own dt from tinit, so the
+     * output intervals stay on the grid tinit + k x interval across switches */
+    gmx_bool        bSched = FALSE, bSchedSwitch = FALSE;
+    int             sched_k = 0, sched_nst0[SFMD_SCHED_NNST], nstglobalcomm_arg = nstglobalcomm;
+    gmx_large_int_t sched_step0 = 0, sched_k0 = 0, step_ph, step_st;
+    double          sched_t0 = 0, sched_dt0 = 0, sched_dtprev = 0, sched_tinit = 0;
 
     /* Check for special mdrun options */
     bRerunMD = (Flags & MD_RERUN);
@@ -1264,9 +1296,38 @@ double do_md(FILE *fplog, t_commrec *cr, int nfile, const t_filenm fnm[],
         bResetCountersHalfMaxH = (max_hours > 0);
     }
 
+    /* sfmd-schedule: tinit + nsteps x dt (the tpr's) stays the end time;
+     * count the steps it takes through the stages.  init_step + nsteps is the
+     * tpr's total on a continuation too (checkpoint.c), so this holds there. */
+    if (bIonize && ir->sfmd_sched_n > 0 && !bRerunMD)
+    {
+        bSched    = TRUE;
+        sched_dt0 = ir->delta_t;
+        sched_nst0[0] = ir->nstlist; sched_nst0[1] = ir->nstcalcenergy; sched_nst0[2] = ir->nstenergy;
+        sched_nst0[3] = ir->nstlog;  sched_nst0[4] = ir->nstcomm;       sched_nst0[5] = ir->nstxout;
+        sched_nst0[6] = ir->nstvout; sched_nst0[7] = ir->nstfout;       sched_nst0[8] = ir->nstxtcout;
+        sched_t0      = ir->init_t;
+        sched_tinit   = ir->init_t;
+        if (ir->nsteps >= 0)
+        {
+            const double t_end = ir->init_t + (ir->init_step + ir->nsteps) * sched_dt0;
+
+            ir->nsteps = sfmd_sched_steps_to(ir, sched_dt0, t_end) - ir->init_step;
+            if (fplog != NULL)
+            {
+                fprintf(fplog, "sfmd-schedule: %d stage%s after the first, the run ends at %g fs after %s more steps\n",
+                        ir->sfmd_sched_n, ir->sfmd_sched_n > 1 ? "s" : "", t_end * 1e3,
+                        gmx_step_str(ir->nsteps, sbuf));
+            }
+        }
+    }
+
     if (bIonize)
     {
-        sfion = sfionize_init(fplog, ir, mdatoms, cr);
+        sfion = sfionize_init(fplog, ir, mdatoms, cr,
+                              gmx_mtop_ftype_count(top_global, F_BONDS) +
+                              gmx_mtop_ftype_count(top_global, F_G96BONDS) +
+                              gmx_mtop_ftype_count(top_global, F_HARMONIC));
     }
 
     /* md-vv uses averaged full step velocities for T-control
@@ -1666,6 +1727,20 @@ double do_md(FILE *fplog, t_commrec *cr, int nfile, const t_filenm fnm[],
 
     debug_gmx();
 
+    if (bSched)
+    {
+        /* the stage the run starts in: stage 0, or a later one on a continuation */
+        sched_k = sfmd_sched_stage(ir, sched_dt0, ir->init_step, &sched_step0, &sched_t0);
+        sfmd_sched_set_ir(ir, sched_k, sched_dt0, sched_nst0);
+        sched_k0 = (gmx_large_int_t)floor((sched_t0 - sched_tinit) / ir->delta_t + 0.5);
+        if (sched_k > 0)
+        {
+            nstglobalcomm   = check_nstglobalcomm(fplog, cr, nstglobalcomm_arg, ir);
+            bGStatEveryStep = (nstglobalcomm == 1);
+        }
+        sfionize_schedule(sfion, fplog, ir, sched_k, sfmd_sched_pb(ir, sched_k), sched_step0, sched_t0, FALSE,
+                          ir->delta_t);
+    }
 
     /***********************************************************
      *
@@ -1781,8 +1856,34 @@ double do_md(FILE *fplog, t_commrec *cr, int nfile, const t_filenm fnm[],
         }
         else
         {
-            bLastStep = (step_rel == ir->nsteps);
-            t = t0 + step * ir->delta_t;
+            bLastStep    = (step_rel == ir->nsteps);
+            bSchedSwitch = FALSE;
+            if (bSched)
+            {
+                /* sfmd-schedule: a new stage starts at this step */
+                gmx_large_int_t s0;
+                double          tt0;
+                const int       k = sfmd_sched_stage(ir, sched_dt0, step, &s0, &tt0);
+
+                if (k != sched_k)
+                {
+                    sched_dtprev = ir->delta_t;
+                    sfmd_sched_set_ir(ir, k, sched_dt0, sched_nst0);
+                    nstglobalcomm   = check_nstglobalcomm(fplog, cr, nstglobalcomm_arg, ir);
+                    bGStatEveryStep = (nstglobalcomm == 1);
+                    sfionize_schedule(sfion, fplog, ir, k, sfmd_sched_pb(ir, k), s0, tt0, TRUE, sched_dtprev);
+                    sched_k      = k;
+                    sched_step0  = s0;
+                    sched_t0     = tt0;
+                    sched_k0     = (gmx_large_int_t)floor((sched_t0 - sched_tinit) / ir->delta_t + 0.5);
+                    bSchedSwitch = TRUE;
+                }
+                t = sched_t0 + (step - sched_step0) * ir->delta_t;
+            }
+            else
+            {
+                t = t0 + step * ir->delta_t;
+            }
         }
 
         if (ir->efep != efepNO)
@@ -1863,7 +1964,13 @@ double do_md(FILE *fplog, t_commrec *cr, int nfile, const t_filenm fnm[],
         }
 
         /* Stop Center of Mass motion */
-        bStopCM = (ir->comm_mode != ecmNO && do_per_step(step, ir->nstcomm));
+        /* sfmd-schedule (both 0 without one): nstlist and nstcomm count from the
+         * stage's first step (step_st); the output intervals, nstcalcenergy and
+         * nstglobalcomm from tinit in the stage's dt (step_ph), so frames stay on
+         * the time grid whatever the switch times (grompp checks they divide) */
+        step_st = step - sched_step0;
+        step_ph = step_st + sched_k0;
+        bStopCM = (ir->comm_mode != ecmNO && do_per_step(step_st, ir->nstcomm));
 
         /* Copy back starting coordinates in case we're doing a forcefield scan */
         if (bFFscan)
@@ -1885,7 +1992,7 @@ double do_md(FILE *fplog, t_commrec *cr, int nfile, const t_filenm fnm[],
         else
         {
             /* Determine whether or not to do Neighbour Searching and LR */
-            bNStList = (ir->nstlist > 0 && step % ir->nstlist == 0);
+            bNStList = (ir->nstlist > 0 && step_st % ir->nstlist == 0);
 
             bNS = (bFirstStep || bExchanged || bNStList ||
                    (ir->nstlist == -1 && nlh.nabnsb > 0));
@@ -1938,7 +2045,7 @@ double do_md(FILE *fplog, t_commrec *cr, int nfile, const t_filenm fnm[],
             bBornRadii = TRUE;
         }
 
-        do_log = do_per_step(step, ir->nstlog) || bFirstStep || bLastStep;
+        do_log = do_per_step(step_ph, ir->nstlog) || bFirstStep || bLastStep;
         do_verbose = bVerbose &&
                      (step % stepout == 0 || bFirstStep || bLastStep);
 
@@ -2019,7 +2126,7 @@ double do_md(FILE *fplog, t_commrec *cr, int nfile, const t_filenm fnm[],
         sfmd-pulse-focal-diameter   focal spot diameter [nm]
         sfmd-pulse-wavelength       laser wavelength [nm]
         sfmd-autostop               stop once E_kin/E_tot passes the threshold
-        sfmd-autostop-threshold     that threshold
+        sfmd-autostop-energy-ratio     that threshold
         sfmd-initial-charges        0 = start neutral, 1 = read charges.txt
         sfmd-detailed-output        all per-step output (heavy I/O)
         sfmd-charge-output-stride   steps between charges_over_time.bin frames
@@ -2033,7 +2140,7 @@ double do_md(FILE *fplog, t_commrec *cr, int nfile, const t_filenm fnm[],
 
         /* Ionize the atoms if necessary.  Must run before do_force(), so
          * that this step's forces see this step's charges. */
-        sfionize_step(sfion, ir, mdatoms, t, step, bFirstStep, cr);
+        sfionize_step(sfion, ir, mdatoms, state->x, t, step, bFirstStep, cr, nrnb);
 
         /* Update force field in ffscan program */
         if (bFFscan)
@@ -2068,17 +2175,17 @@ double do_md(FILE *fplog, t_commrec *cr, int nfile, const t_filenm fnm[],
         /* Determine the energy and pressure:
          * at nstcalcenergy steps and at energy output steps (set below).
          */
-        bNstEner = do_per_step(step, ir->nstcalcenergy);
+        bNstEner = do_per_step(step_ph, ir->nstcalcenergy);
         bCalcEnerPres =
             (bNstEner ||
              (ir->epc != epcNO && do_per_step(step, ir->nstpcouple)));
 
         /* Do we need global communication ? */
         bGStat = (bCalcEnerPres || bStopCM ||
-                  do_per_step(step, nstglobalcomm) ||
+                  do_per_step(step_ph, nstglobalcomm) ||
                   (ir->nstlist == -1 && !bRerunMD && step >= nlh.step_nscheck));
 
-        do_ene = (do_per_step(step, ir->nstenergy) || bLastStep);
+        do_ene = (do_per_step(step_ph, ir->nstenergy) || bLastStep);
 
         if (do_ene || do_log)
         {
@@ -2133,6 +2240,10 @@ double do_md(FILE *fplog, t_commrec *cr, int nfile, const t_filenm fnm[],
                      fr, vsite, mu_tot, t, outf->fp_field, ed, bBornRadii,
                      (bNS ? GMX_FORCE_NS : 0) | force_flags);
         }
+
+        /* The trapped-electron cloud's force on the ions; no-op unless
+         * sfmd-electrons = pbgrid. */
+        sfionize_screen_forces(sfion, ir, mdatoms, state->x, state->v, f, cr);
 
         GMX_BARRIER(cr->mpi_comm_mygroup);
 
@@ -2331,19 +2442,19 @@ double do_md(FILE *fplog, t_commrec *cr, int nfile, const t_filenm fnm[],
         GMX_MPE_LOG(ev_output_start);
 
         mdof_flags = 0;
-        if (do_per_step(step, ir->nstxout))
+        if (do_per_step(step_ph, ir->nstxout))
         {
             mdof_flags |= MDOF_X;
         }
-        if (do_per_step(step, ir->nstvout))
+        if (do_per_step(step_ph, ir->nstvout))
         {
             mdof_flags |= MDOF_V;
         }
-        if (do_per_step(step, ir->nstfout))
+        if (do_per_step(step_ph, ir->nstfout))
         {
             mdof_flags |= MDOF_F;
         }
-        if (do_per_step(step, ir->nstxtcout))
+        if (do_per_step(step_ph, ir->nstxtcout))
         {
             mdof_flags |= MDOF_XTC;
         }
@@ -2606,6 +2717,22 @@ double do_md(FILE *fplog, t_commrec *cr, int nfile, const t_filenm fnm[],
                     copy_rvecn(state->x, cbuf, 0, state->natoms);
                 }
 
+                if (bSchedSwitch)
+                {
+                    /* sfmd-schedule, first step of a stage: leap-frog keeps
+                     * v(t - dt_old/2), and v(t + dt_new/2) is that plus
+                     * a(t) (dt_old + dt_new)/2; the update below adds a dt_new */
+                    const real dh = 0.5 * (sched_dtprev - ir->delta_t);
+                    int        ia, d;
+
+                    for (ia = mdatoms->start; ia < mdatoms->start + mdatoms->homenr; ia++)
+                    {
+                        for (d = 0; d < DIM; d++)
+                        {
+                            state->v[ia][d] += dh * f[ia][d] * mdatoms->invmass[ia];
+                        }
+                    }
+                }
                 update_coords(fplog, step, ir, mdatoms, state, f, fr->bTwinRange && bNStList, fr->f_twin, fcd,
                               ekind, M, wcycle, upd, bInitStep, etrtPOSITION, cr, nrnb, constr, &top->idef);
                 wallcycle_stop(wcycle, ewcUPDATE);
@@ -2786,6 +2913,10 @@ double do_md(FILE *fplog, t_commrec *cr, int nfile, const t_filenm fnm[],
         {
             bSFAutostop = TRUE;
         }
+        if (sfionize_dirstop(sfion, ir, mdatoms, state->v, step, t, cr))
+        {
+            bSFAutostop = TRUE;
+        }
 
         if (bVV)
         {
@@ -2848,7 +2979,7 @@ double do_md(FILE *fplog, t_commrec *cr, int nfile, const t_filenm fnm[],
                 pull_print_output(ir->pull, step, t);
             }
 
-            if (do_per_step(step, ir->nstlog))
+            if (do_per_step(step_ph, ir->nstlog))
             {
                 if (fflush(fplog) != 0)
                 {

@@ -1,0 +1,91 @@
+\chapter{Versions, tests and limitations}
+\label{app:misc}
+
+\section{File format versions}
+
+The \file{.tpr} carries the \opt{sfmd-*} options.
+Stock GROMACS 4.5.4 writes version 73; this build writes 185 and reads stock files.
+It refuses 74 and 76--174, which \code{gromacs-mc} uses for a different layout, instead of misreading them.
+
+\begin{table}[H]
+\centering\small
+\begin{tabular}{@{}l l@{}}
+\toprule
+version & added \\
+\midrule
+75 & the strong-field options (pulse, autostop, initial charges, output) \\
+175 & the trapped-electron cloud (\opt{sfmd-electrons}, \opt{sfmd-pb-*}, \opt{sfmd-evaporation}) \\
+176 & \opt{sfmd-laser-barrier} \\
+177 & \opt{sfmd-laser-heating}, \opt{sfmd-heating-nu-cap} \\
+178 & \opt{sfmd-collisions} \\
+179 & \opt{sfmd-coll-recombination} \\
+180 & \opt{sfmd-heating-shape} \\
+181 & \opt{sfmd-heating-surface} \\
+182 & \opt{sfmd-te-min} \\
+183 & \opt{sfmd-autostop = 2} and its \opt{-angle}, \opt{-interval}, \opt{-min-time} \\
+184 & \opt{sfmd-schedule} \\
+185 & \opt{sfmd-laser-polarization} \\
+\bottomrule
+\end{tabular}
+\end{table}
+An older \file{.tpr} reads with each newer option at the value that keeps its behaviour (off, or the old model).
+
+\section{Renamed and removed options}
+
+\code{grompp} refuses these and names the replacement, because a warning would be swallowed by \code{-maxwarn} and
+several changed meaning as well as name.
+
+\begin{table}[H]
+\centering\small
+\begin{tabularx}{\textwidth}{@{}l X@{}}
+\toprule
+old & new \\
+\midrule
+\opt{sfmd-autostop-threshold} & \opt{sfmd-autostop-energy-ratio} (same value; renamed with autostop 2, as
+  \code{gromacs-mc}) \\
+\opt{sfmd-recombination} & \opt{sfmd-coll-recombination} (same values, \code{gromacs-mc}'s name) \\
+\code{userint1} & removed: \code{-ionize} alone enables the modified force field \\
+\code{userint2}, \code{userint4}, \code{userint6} & removed (never read by this build) \\
+\code{userint3}, \code{userint5}, \code{userint9} & \opt{sfmd-autostop}, \opt{sfmd-detailed-output},
+  \opt{sfmd-initial-charges} \\
+\code{userint7} & \opt{sfmd-charge-output-stride} --- not the same: it writes every $N$th step \\
+\code{userreal1} & \opt{sfmd-pulse-peak-time}, now in fs (multiply by 1000) \\
+\code{userreal2}, \code{userreal4}, \code{userreal5} & \opt{sfmd-pulse-energy}, \opt{sfmd-pulse-focal-diameter},
+  \opt{sfmd-pulse-wavelength} \\
+\code{userreal3} & \opt{sfmd-pulse-fwhm}, now the FWHM in fs (was $\sigma$ in ps: multiply by 2354.82) \\
+\code{userreal6} & \opt{sfmd-autostop-energy-ratio} \\
+\bottomrule
+\end{tabularx}
+\end{table}
+
+\section{Tests}
+
+\begin{description}
+  \item[\file{test/invariance.sh}] 23 short cases (water and lysozyme, one and four ranks, both stops, the schedule,
+    fixed charges, and each cloud option in turn, the defaults, long range and the polarization), compared bit for bit with checksums from
+    a frozen build (machine-specific; \code{--ref-bindir} compares two builds directly).
+    Each case also checks what holds on any build: events against charges, no clamped cloud energy, escaped plus
+    trapped equal to the events, that the option under test acted.
+    Every change to the code has to pass it, and a change that adds an option must leave every earlier case
+    unchanged.
+  \item[\file{test/regression.sh}] the original water-cluster check of event counts and charges.
+  \item[\file{test/pb\_vs\_mc.sh}] the field-free cloud against \code{gromacs-mc}, bit for bit (needs a
+    \code{gromacs-mc} build with \file{test/mc\_pb\_seed.patch}).
+\end{description}
+
+\section{Limitations}
+
+\begin{itemize}
+  \item \textbf{Valence shell only} (Table~\ref{tab:adk}); elements without ADK data stay neutral.
+  \item \textbf{ADK}: the tunnelling limit, from the ground state, without the local field of neighbours and cloud.
+  \item \textbf{The laser has no direction} by default: the barrier is lowered all round, the heating is
+    orientation-averaged. \opt{sfmd-laser-polarization} (development) puts the field along one axis into the solve;
+    there is no quiver or drift motion of single electrons either way.
+  \item \textbf{One temperature}, a Maxwellian cloud in instantaneous equilibrium; the least reliable late at
+    $10^{15}$\,W/cm$^2$, where the cloud cools towards the floor.
+  \item \textbf{Not fitted}: the collision-rate cap and the surface-damping constant are order-of-magnitude choices; their
+    sensitivity is in Appendix~\ref{app:validation}.
+  \item \textbf{No restart with the cloud}: its state is not saved, and \opt{sfmd-initial-charges} is refused with it.
+  \item \textbf{Numerical stability}: very high charges give large forces; if the energies are not smooth, lower the step.
+  \item Tested on Linux only.
+\end{itemize}

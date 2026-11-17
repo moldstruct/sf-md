@@ -1,0 +1,25 @@
+--- a/gromacs-4.5.4-MCMD/src/kernel/mcionize.c
++++ b/gromacs-4.5.4-MCMD/src/kernel/mcionize.c
+@@ -5690,6 +5690,22 @@
+     {
+         mcmd_refresh_atom(mc, mdatoms, i);
+     }
++
++    /* TEST COPY ONLY (sf-md PB port check): GMX_MCMD_PB_SEED="N E_kin" seeds
++     * the cloud on the first step, the rest of the ion charge escaped */
++    {
++        const char *e = getenv("GMX_MCMD_PB_SEED");
++        double      N, E, q = 0;
++
++        if (e != NULL && sscanf(e, "%lf %lf", &N, &E) == 2)
++        {
++            for (i = 0; i < mdatoms->nr; i++) { q += mdatoms->chargeA[i]; }
++            mc->num_free_electrons     = N;
++            mc->screen_E_trapped       = E;
++            mc->escaped_photoelectrons = q - N;
++            fprintf(stderr, "\nmcionize TEST: seeded N %g E_kin %g, charge %g\n", N, E, q);
++        }
++    }
+ }
+ 
+ /* ---------------------------------------------------------------- *

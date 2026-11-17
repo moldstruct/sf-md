@@ -1,0 +1,87 @@
+\chapter{The laser pulse and tunnel ionization}
+\label{ch:adk}
+
+\section{The pulse}
+
+The pulse is a linearly polarized Gaussian with a carrier wave,
+\begin{equation}
+  I(t) = I_0\,e^{-(t-t_0)^2/2\sigma^2},\qquad
+  E(t) = E_0\,e^{-(t-t_0)^2/4\sigma^2}\cos\!\big(\omega(t-t_0)+\varphi\big),
+\end{equation}
+with $t_0$ = \opt{sfmd-pulse-peak-time}, $\sigma$ = \opt{sfmd-pulse-fwhm}$/2\sqrt{2\ln2}$, $\omega = 2\pi c/\lambda$
+($\lambda$ = \opt{sfmd-pulse-wavelength}) and a carrier phase $\varphi$ drawn uniformly in $[-\pi/2,\pi/2]$ per run (and
+broadcast, so that all ranks see the same field).
+The peak intensity follows from the pulse energy $E_p$ = \opt{sfmd-pulse-energy} spread uniformly over a disc of diameter
+$d$ = \opt{sfmd-pulse-focal-diameter}:
+\begin{equation}
+  I_0 = \frac{E_p}{\pi(d/2)^2\,\sigma\sqrt{2\pi}},\qquad E_0 = \sqrt{2I_0/(c\varepsilon_0)}.
+\end{equation}
+The sample (a few nm) is far smaller than the wavelength, so the field is uniform over it.
+It has no direction in the model: ADK depends only on $|E(t)|$, and the cloud sees a cycle-averaged field
+(Chapter~\ref{ch:laser}).
+The field is evaluated within $\pm6\sigma$ of the peak and is zero outside; \file{pulse\_profile.txt} has $I(t)$ and
+$E(t)$ every step.
+
+\section{The ADK rate}
+
+An atom in charge state $q$ is ionized to $q+1$ at the static-field tunnelling rate of Ammosov, Delone and
+Krainov~\cite{adk1986}, in the form of Tong and Lin~\cite{tong2002} (atomic units):
+\begin{gather}
+  W = |C_{n^*l^*}|^2\,f(l,m)\,I_p\,\Big(\frac{2(2I_p)^{3/2}}{F}\Big)^{2n^*-|m|-1}
+      \exp\!\Big(-\frac{2(2I_p)^{3/2}}{3F}\Big),\\
+  |C_{n^*l^*}|^2 = \frac{1}{2\pi n^*}\Big(\frac{2e}{n^*}\Big)^{2n^*},\qquad
+  f(l,m) = \frac{(2l+1)\,(l+|m|)!}{2^{|m|}\,|m|!\,(l-|m|)!},\qquad n^* = \frac{Z}{\sqrt{2I_p}},
+\end{gather}
+with $F = |E(t)|$ the instantaneous field, $I_p$ the ionization energy of the state, and $Z = q+1$ the charge left
+behind.
+The instantaneous (not cycle-averaged) rate is used, with the field of the current step, so ionization happens near the
+field crests; at 2\,as there are $\sim$1400 steps per optical cycle at 850\,nm.
+The constants of every state are computed once at start-up and printed to the \file{.log}.
+
+\begin{table}[H]
+\centering\small
+\begin{tabular}{@{}l l l l@{}}
+\toprule
+element & ionization energies (eV), $q\to q+1$ & orbital ($n,l,|m|$) & states \\
+\midrule
+H & 13.598 & 1s & 1 \\
+C & 11.260, 24.383, 47.887, 64.494 & 2p ($|m|$ 0, 1), then 2s & 4 \\
+N & 14.534, 29.601, 47.448, 77.473, 97.890 & 2p ($|m|$ 0, 1, 1), then 2s & 5 \\
+O & 13.618, 35.117, 54.936, 77.413, 113.899, 138.119 & 2p ($|m|$ 0, 1, 1, 1), then 2s & 6 \\
+S & 10.360, 23.330, 34.830, 47.300, 72.600, 88.000 & 3p ($|m|$ 0, 1, 1, 1), then 3s & 6 \\
+\bottomrule
+\end{tabular}
+\caption{The charge states ADK can reach: the valence shell only. The first electron comes from $m=0$, later ones from
+$|m|=1$, a simplified Hund order.}
+\label{tab:adk}
+\end{table}
+
+Only the valence shell is stripped: H to 1+, C to 4+, N to 5+, O and S to 6+.
+Inner shells (K for C, N, O; L for S) are out of reach of optical fields at these intensities.
+Other elements (F, Na, Mg, P, Cl, Ca, Fe, \dots) are recognized by their mass but have no ADK data and stay neutral.
+Deuterium (mass 2) is hydrogen.
+
+\section{Sampling}
+
+Every MD step, for every atom, the rate $W$ of its current state gives the probability
+\begin{equation}
+  p = 1 - e^{-W\Delta t}
+\end{equation}
+of one ionization in the step, tested against a uniform random number from the module's own stream.
+At most one electron per atom and step is released; at the rates reached here ($W\Delta t\ll1$ except at the field
+crests at $10^{17}$\,W/cm$^2$, where states saturate within a few steps) that is no limitation.
+Without the cloud every rank samples its own atoms with its own stream; with the cloud the master samples all atoms
+from one stream, because each released electron's escape depends on the whole sample (Chapter~\ref{ch:pb}).
+\file{transition\_log.txt} records every event (Chapter~\ref{ch:output}).
+
+\section{What ADK leaves out}
+
+\begin{itemize}
+  \item Multiphoton ionization: ADK is the tunnelling limit, valid for a Keldysh parameter
+    $\gamma = \omega\sqrt{2I_p}/F\lesssim1$; at 850\,nm and $10^{15}$\,W/cm$^2$, $\gamma\approx0.3$ for neutral C.
+  \item Barrier suppression: above the over-the-barrier field ADK overestimates the rate; the states saturate anyway.
+  \item The field of the neighbouring ions and of the cloud, which lowers or raises the barrier locally
+    (enhanced ionization).
+  \item Excited states, rescattering, and the electron's drift energy after the pulse: electrons are born at rest
+    at their atom.
+\end{itemize}

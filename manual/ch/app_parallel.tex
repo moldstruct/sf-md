@@ -1,0 +1,42 @@
+\chapter{Parallel runs}
+\label{app:parallel}
+
+\section{Particle decomposition}
+
+\code{mdrun -nt N -pd} runs $N$ thread-MPI ranks with particle decomposition.
+Domain decomposition is not usable: it cannot follow an exploding sample, and the cloud needs global searches over
+all positions (the escape depth, the grid deposit).
+GPUs are not supported.
+
+\section{What runs where}
+
+\paragraph{Without the cloud} every rank samples ADK for its own (home) atoms with its own random stream; the charges
+are then exchanged around the ring, so every rank's force calculation sees every charge.
+\paragraph{With the cloud} the master samples all atoms from one stream, because each released electron's escape and
+energy depend on the whole sample.
+To have all coordinates every step, the master gathers them over the whole ring of ranks (GROMACS's own
+\code{move\_x()} runs only the pulses its pair list needs, and the master's copy of the last block was then stale until
+the trajectory was written --- a bug found and fixed in \code{gromacs-mc}).
+During the solve the other ranks sleep on a condition variable, and their cores run the multithreaded FFTs
+(\env{GMX\_SFMD\_PBG\_FFT\_THREADS}, default the number of ranks).
+The master then broadcasts the charges, the electron potential (single precision) and a few scalars, and every rank adds
+the cloud's forces to its own atoms.
+The MD itself is distributed as usual.
+
+\paragraph{Stops} are decided on the master and broadcast: a rank that left the MD loop alone would hang the others.
+The energy stop is tested only on steps where the energies are summed over all ranks; the direction stop sums its
+histogram over the ranks first.
+
+\section{How many threads}
+
+The solve dominates with the cloud and scales with the FFT threads, the rest with the ranks.
+3--4 threads suit lysozyme-sized samples.
+For an ensemble it is usually more efficient to run many independent runs side by side than to parallelize one.
+
+\section{Reproducibility}
+
+With \env{GMX\_SFMD\_SEED} a run is reproducible on the same number of ranks and the same build: the test suite
+(Appendix~\ref{app:misc}) checks this bit for bit, mostly with 4 ranks.
+Without the cloud each rank owns a stream, so a different rank count is a different realization from the first event.
+With the cloud the events come from one stream, but GROMACS sums the forces in a different order on a different rank
+count, so the positions differ in the last bits and, as in any MD, the runs agree statistically rather than bit for bit.

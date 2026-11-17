@@ -1,0 +1,64 @@
+\chapter{Introduction}
+\label{ch:intro}
+
+MolDStruct SF/MD simulates what happens to a biomolecule, or any small system of light atoms, when it is hit by an
+intense femtosecond \emph{optical} laser pulse.
+The field of the pulse tears electrons out of the atoms by tunnelling, the sample charges up and explodes, and the
+ions fly apart in directions that still carry information on the original structure.
+The model follows the charge state of every atom, the electrons that are released, and the motion of the nuclei in one
+simulation.
+
+It is part of the MolDStruct toolbox and is built on GROMACS~4.5.4~\cite{pronk2013}, extended with an ionization
+module.
+Everything GROMACS does still works the same way; the ionization model is switched on with \code{mdrun -ionize} and
+controlled by \opt{sfmd-*} options in the \file{.mdp} file.
+Its sibling, MolDStruct MC/MD (\code{gromacs-mc}), treats X-ray pulses with a Monte Carlo of the inner-shell
+processes; the two share the modified force field and, since November 2026, the trapped-electron cloud.
+
+\section{The model in one page}
+
+\begin{description}
+  \item[Atoms] are classical particles with an integer charge.
+    The charge is that of the ion's valence shell being stripped (H up to 1+, C 4+, N 5+, O 6+, S 6+), and it enters
+    the force field.
+  \item[The laser pulse] is a Gaussian in time with a carrier wave; its peak intensity follows from the pulse energy,
+    duration and focal spot (Chapter~\ref{ch:adk}).
+  \item[Tunnel ionization] is the Ammosov--Delone--Krainov (ADK) rate~\cite{adk1986,tong2002} of the instantaneous
+    field for each atom's current charge state, turned into a probability per MD step and sampled (Chapter~\ref{ch:adk}).
+  \item[The force field] is modified so that ionized atoms lose their chemical bonds: bonded terms fade out with the
+    charge, bonds break irreversibly, and the Coulomb interactions between bonded neighbours are restored
+    (Chapter~\ref{ch:ff}).
+  \item[Released electrons] either escape or are trapped by the growing positive charge (optional,
+    \opt{sfmd-electrons = pbgrid}).
+    The trapped ones form a hot electron cloud, a continuous density in thermal equilibrium with the ions: a
+    Poisson--Boltzmann problem solved on a three-dimensional grid every 0.2\,fs (Chapter~\ref{ch:pb}).
+    The cloud screens the ions, pulls on them, decides which new electrons escape, and evaporates as the sample expands.
+  \item[The laser acts on the cloud] by lowering its escape barrier and by heating it through inverse bremsstrahlung
+    (Chapter~\ref{ch:laser}).
+  \item[Electron--ion collisions] in the cloud ionize further, and after the pulse can recombine
+    (Chapter~\ref{ch:coll}).
+\end{description}
+
+\section{When the cloud matters}
+
+Without the cloud (\opt{sfmd-electrons = none}, the default) every electron leaves the instant it is freed, and the MD
+sees bare ions.
+For lysozyme (1960 atoms) at 850\,nm and 15\,fs that is a fair description at $10^{17}$\,W/cm$^2$, where the cloud is
+gone before the pulse peak; at $10^{15}$\,W/cm$^2$ about half the electrons stay trapped, the ions reach only 0.3 of
+their cloud-free kinetic energy, and the fast ions fly 6.5$^\circ$ away from their cloud-free directions
+(Appendix~\ref{app:validation}).
+
+\devnote{The cloud and everything built on it (the laser barrier and heating, impact ionization, recombination, the
+temperature floor, long range, the direction autostop, the schedule) live on the \code{pb-electrons} branch of sf-md.
+They were tested on lysozyme at $10^{15}$--$10^{17}$\,W/cm$^2$, 850\,nm, 15\,fs, but not yet against experiment or a
+reference code; the results tables in Appendix~\ref{app:validation} are the evidence there is.}
+
+\section{This manual}
+
+Chapter~\ref{ch:start} gets a run going.
+Chapters~\ref{ch:adk}--\ref{ch:coll} describe the physics, Chapter~\ref{ch:output} the output, and
+Chapters~\ref{ch:mdp} and~\ref{ch:env} list every option and environment variable.
+The appendices cover the numerics of the cloud, parallel runs, the tests behind the model, and version and compatibility
+notes.
+The code is in \file{src/kernel/sfionize.c} (ADK, the pulse, the run control) and \file{src/kernel/sfelectrons.c} (the
+cloud), with the force field in \file{src/gmxlib/bondfree.c} and \file{nonbonded/nonbonded.c}.

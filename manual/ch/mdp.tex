@@ -1,0 +1,87 @@
+\chapter{mdp options}
+\label{ch:mdp}
+
+Every \opt{sfmd-*} option is inert without \code{mdrun -ionize}: without it the run is stock GROMACS 4.5.4 whatever
+the \file{.mdp} says.
+\code{grompp} refuses an unknown \opt{sfmd-*} key (a typo), a key given twice, the old \code{userint}/\code{userreal}
+slots and the two renamed options, naming the replacement each time (Appendix~\ref{app:misc}).
+The last column is the \file{.tpr} version that introduced the option; an older \file{.tpr} reads with the value
+that keeps its behaviour.
+
+\section{GROMACS settings}
+
+\begin{tabularx}{\textwidth}{@{}l l X@{}}
+\toprule
+option & value & why \\
+\midrule
+\code{dt} & 0.000002 (2\,as) & the tested step; the run summary warns above it \\
+\code{morse} & \code{yes} & harmonic bonds neither weaken nor break (Chapter~\ref{ch:ff}) \\
+\code{pbc}, \code{coulombtype} & \code{no}, \code{Cut-off} & an isolated sample; needed by \opt{sfmd-pb-long-range = auto} \\
+\code{rcoulomb}, \code{rvdw}, \code{rlist} & 0 (all pairs) & set by \code{grompp} with the cloud and \code{auto} \\
+\code{integrator} & \code{md} & leap-frog; \opt{sfmd-schedule} needs it \\
+\bottomrule
+\end{tabularx}
+
+\section{Pulse and run control}
+
+\begin{longtable}{@{}p{0.33\textwidth}p{0.12\textwidth}p{0.39\textwidth}l@{}}
+\toprule
+option & default & meaning & tpr \\
+\midrule
+\endhead
+\opt{sfmd-pulse-peak-time} & 0 & centre of the Gaussian pulse [fs] & 75 \\
+\opt{sfmd-pulse-fwhm} & 0 & full width at half maximum of the intensity [fs] & 75 \\
+\opt{sfmd-pulse-energy} & 0 & pulse energy [J] & 75 \\
+\opt{sfmd-pulse-focal-diameter} & 0 & diameter of the (uniform) focal spot [nm] & 75 \\
+\opt{sfmd-pulse-wavelength} & 0 & wavelength [nm] & 75 \\
+\opt{sfmd-autostop} & 0 & 1: stop once $E_{\mathrm{kin}}/E_{\mathrm{tot}}$ exceeds \opt{sfmd-autostop-energy-ratio}
+  (after step 10\,000); 2: once the ion directions have settled & 75/183 \\
+\opt{sfmd-autostop-energy-ratio} & 0.99 & the ratio of autostop 1 & 75 \\
+\opt{sfmd-autostop-angle} & 2 & autostop 2: predicted remaining median heavy-ion turn [deg] & 183 \\
+\opt{sfmd-autostop-interval} & 5 & autostop 2: fs between checks & 183 \\
+\opt{sfmd-autostop-min-time} & 60 & autostop 2: no stop before this many fs after the pulse peak & 183 \\
+\opt{sfmd-schedule} & (empty) & \code{t:dt:pb ...} [fs]: from time $t$ the MD step \code{dt} and the cloud-solve
+  interval \code{pb}; at most 16 stages; the first change not before the peak + $3\sigma$ & 184 \\
+\opt{sfmd-initial-charges} & 0 & 1: start from \file{charges.txt}; not with the cloud & 75 \\
+\opt{sfmd-detailed-output} & 0 & 1: the per-step and event files (Chapter~\ref{ch:output}) & 75 \\
+\opt{sfmd-charge-output-stride} & 50 & steps between frames of \file{charges\_over\_time.bin} & 75 \\
+\bottomrule
+\end{longtable}
+
+\section{The trapped-electron cloud}
+
+\devnote{The cloud options are on the \code{pb-electrons} branch. With \opt{sfmd-electrons = pbgrid} the physics
+options default to the recommended model (Chapter~\ref{ch:start}); without the cloud they are off, and setting the
+barrier, heating or collisions explicitly is refused.}
+
+\begin{longtable}{@{}p{0.33\textwidth}p{0.12\textwidth}p{0.39\textwidth}l@{}}
+\toprule
+option & default & meaning & tpr \\
+\midrule
+\endhead
+\opt{sfmd-electrons} & \code{none} & \code{none}: every electron leaves; \code{pbgrid}: the Poisson--Boltzmann cloud & 175 \\
+\opt{sfmd-pb-interval} & 0.2 & fs between solves & 175 \\
+\opt{sfmd-pb-smoothing} & 0.25 & charge smoothing $s_e$ [nm]; the ion kinetic energy depends on it & 175 \\
+\opt{sfmd-pb-cells-per-smoothing} & 2.5 & grid spacing $s_e$/this at the start & 175 \\
+\opt{sfmd-pb-box-cut} & 0.02 & fraction of electrons allowed outside the adaptive box & 175 \\
+\opt{sfmd-pb-box-max} & 3 & largest box half-width [$R$] & 175 \\
+\opt{sfmd-pb-grid-limit} & 384 & largest grid per dimension & 175 \\
+\opt{sfmd-pb-newton-tol} & 0.01 & Newton tolerance (relative) & 175 \\
+\opt{sfmd-pb-long-range} & \code{auto} & 1: GROMACS does the ion pairs within \code{rcoulomb}, the grid the rest; 0: off;
+  \code{auto}: all pairs up to 10\,000 atoms, above that 1 with a 2\,nm cut-off (\code{grompp} sets the cut-offs) & 175 \\
+\opt{sfmd-evaporation} & 1 & the hot tail leaves over the escape level & 175 \\
+\opt{sfmd-laser-barrier} & 1$^*$ & 1: the envelope field lowers the escape level; 2: spill and evaporation follow
+  $|E(t)|$; 0: off & 176 \\
+\opt{sfmd-laser-heating} & 1$^*$ & inverse-bremsstrahlung heating & 177 \\
+\opt{sfmd-heating-nu-cap} & 1 & $\nu_{ei}\le$ this $\times\,\omega_p$; 0: no cap & 177 \\
+\opt{sfmd-heating-shape} & \code{ellipsoid}$^*$ & \code{sphere} or \code{ellipsoid}: the field inside the cloud & 180 \\
+\opt{sfmd-heating-surface} & 1$^*$ & surface damping $\nu_s = A\bar v/R$; 0: off & 181 \\
+\opt{sfmd-collisions} & 1$^*$ & electron-impact ionization (Lotz) & 178 \\
+\opt{sfmd-coll-recombination} & 0 & three-body recombination: 1 always, 2 after the pulse; needs collisions & 179 \\
+\opt{sfmd-te-min} & 1$^*$ & temperature floor [eV] of the solve, evaporation and recombination; 0: the old model & 182 \\
+\opt{sfmd-laser-polarization} & 0 & \code{x}, \code{y}, \code{z}: the instantaneous field along that axis in the solve,
+  saddle escape level, $qE$ on the ions (development, Section~\ref{sec:polarization}); needs the barrier & 185 \\
+\bottomrule
+\end{longtable}
+\noindent $^*$ with \opt{sfmd-electrons = pbgrid}; 0 (\code{sphere}) without the cloud.
+Before 11 November 2026 these defaulted to 0 (\code{sphere}) with the cloud too.

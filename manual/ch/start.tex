@@ -1,0 +1,112 @@
+\chapter{Getting started}
+\label{ch:start}
+
+\section{Building}
+
+The build is that of GROMACS 4.5.4 with CMake; FFTW~3 in single precision is needed for the electron cloud.
+From the source tree:
+\begin{lstlisting}
+cd gromacs-4.5.4-SFMD
+mkdir build && cd build
+cmake .. -DCMAKE_BUILD_TYPE=Release -DGMX_FFT_LIBRARY=fftw3 \
+         -DCMAKE_INSTALL_PREFIX=/path/to/install
+make -j8 install
+\end{lstlisting}
+For a reference build that must not change when libraries are rebuilt, add \code{-DBUILD\_SHARED\_LIBS=OFF}.
+Run inputs must be written with this build's \code{grompp}: the \file{.tpr} carries the \opt{sfmd-*} options (format
+185), which stock GROMACS and \code{gromacs-mc} cannot read.
+
+\section{A first run}
+
+\code{example/} is a complete run: lysozyme (PDB 1AKI, 1960 atoms) in vacuum, exploded by a 5\,mJ, 5\,fs pulse.
+The steps are those of any GROMACS run, with \code{-ionize} added to \code{mdrun}:
+\begin{lstlisting}
+pdb2gmx -f 1aki.pdb -ff charmm27 -water none
+grompp  -f exp.mdp -c conf.gro -p topol.top -o explode.tpr
+mdrun   -deffnm explode -nt 4 -pd -ionize
+\end{lstlisting}
+\code{-water none} keeps \code{pdb2gmx} from asking; \code{-pd} (particle decomposition) is required for more than one
+thread, because domain decomposition cannot follow an explosion (Appendix~\ref{app:parallel}).
+
+The \file{.mdp} needs, besides the usual vacuum settings,
+\begin{lstlisting}
+dt                          = 0.000002   ; 2 as (ps!)
+morse                       = yes        ; bonds that can break
+pbc                         = no
+coulombtype                 = Cut-off
+sfmd-pulse-peak-time        = 35         ; fs
+sfmd-pulse-fwhm             = 15         ; fs, full width at half maximum
+sfmd-pulse-energy           = 1.13e-4    ; J
+sfmd-pulse-focal-diameter   = 30000      ; nm
+sfmd-pulse-wavelength       = 850        ; nm
+\end{lstlisting}
+Note the units: pulse times in fs, \code{dt} and \code{tinit} in GROMACS's ps.
+These five pulse values give a peak intensity of $10^{15}$\,W/cm$^2$; the run summary prints it
+(Section~\ref{sec:summaries}).
+The cut-offs are set by \code{grompp} when the cloud is on (\opt{sfmd-pb-long-range = auto},
+Section~\ref{sec:longrange}); without the cloud use \code{rcoulomb = rvdw = rlist = 0} (all pairs) or a cut-off that
+covers the exploding sample.
+
+\section{With the trapped-electron cloud}
+
+\begin{lstlisting}
+sfmd-electrons          = pbgrid
+sfmd-coll-recombination = 2      ; optional: recombination after the pulse
+\end{lstlisting}
+With \opt{sfmd-electrons = pbgrid} the cloud's options default to the recommended model: the laser barrier, laser
+heating of an ellipsoidal cloud with surface damping, electron-impact ionization and a 1\,eV temperature floor
+(Chapters~\ref{ch:pb}--\ref{ch:coll}).
+Each can be switched off on its own.
+Recombination stays off by default; after the pulse (\opt{= 2}) it gives back most of the extra charge impact
+ionization creates without changing the explosion.
+
+\devnote{Before 11 November 2026 the cloud's options all defaulted to 0. An \file{.mdp} written then that relied on the
+defaults now gets the full model; set the options to 0 (and \opt{sfmd-heating-shape = sphere}) to reproduce it. A
+\file{.tpr} keeps what it was made with.}
+
+\section{How long to run}
+
+The ions' directions settle within roughly 100\,fs of the pulse; their kinetic energy keeps growing slowly much longer.
+Two options cut the cost:
+\begin{description}
+  \item[\opt{sfmd-autostop = 2}] stops the run once the heavy-ion velocity directions have settled: every
+    \opt{sfmd-autostop-interval} (5\,fs) the median turn since the last check is extrapolated as $1/(t-t_{\mathrm{peak}})^2$,
+    and the run stops when the turn still to come is below \opt{sfmd-autostop-angle} (2$^\circ$), but not before
+    \opt{sfmd-autostop-min-time} (60\,fs) after the pulse peak; \code{nsteps} stays the upper limit.
+    On lysozyme it stopped at 95\,fs ($10^{16}$) and 125--130\,fs ($10^{15}$), with the directions still turning
+    0.4--2.2$^\circ$ by 300\,fs against a seed spread of 1--5$^\circ$, and the ion energy 6\,\% short of its 300\,fs value;
+    2.5--3.3$\times$ less wall time.
+    \opt{sfmd-autostop = 1} is the older stop at a ratio of kinetic to total energy.
+  \item[\opt{sfmd-schedule}] lengthens the step and the cloud-solve interval after the pulse, e.g.
+    \code{65:0.01:0.2 95:0.1:2 135:0.1:5} (from 65\,fs a 10\,as step and a solve every 0.2\,fs, and so on).
+    \code{nsteps} $\times$ \code{dt} stays the end time.
+    \code{grompp} refuses a first change before the pulse peak + $3\sigma$ (changing the step while ADK still ionizes
+    changes the run's random history) and output intervals the new steps do not divide.
+    On lysozyme the schedule above moved the directions by at most 1.2$^\circ$ and the ion energy by $-0.2$\,\% at
+    300\,fs, 2.8--3.1$\times$ faster.
+    Off by default.
+\end{description}
+Compare kinetic energies only between runs stopped or scheduled the same way.
+
+\section{Seeds and ensembles}
+\label{sec:seeds}
+
+The ADK draws are seeded from \code{/dev/random}, so every run is an independent realization --- what an ensemble
+needs.
+\env{GMX\_SFMD\_SEED=n} pins the seed; each rank still gets its own stream (the rank index is mixed in), so a pinned
+run is reproducible for a given rank count only.
+The seed used is in the run summary.
+Fixed seeds are for tests, not for production ensembles.
+
+\section{Chaining runs}
+
+\opt{sfmd-initial-charges = 1} starts from the charges in \file{charges.txt} (atom index and charge per line), which a
+finished run writes into \file{simulation\_output/}.
+It cannot be used with the cloud, whose state is not saved; \code{grompp} refuses the combination.
+
+\section{The run summary}
+
+At the first step \code{mdrun} prints a summary of what the run will do --- system, pulse with its peak intensity and
+field, length, schedule, seed, ranks, every process with its settings --- and warnings for settings outside what was
+tested (Section~\ref{sec:summaries}).
+Read it first.

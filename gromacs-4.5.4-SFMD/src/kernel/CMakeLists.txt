@@ -36,7 +36,7 @@ set(MDRUN_SOURCES
     gctio.c    ionize.c runner.c
     do_gct.c     repl_ex.c  xutils.c
     md.c         mdrun.c    genalg.c md_openmm.c
-    sfionize.c)
+    sfionize.c sfelectrons.c)
 
 add_library(gmxpreprocess ${GMXPREPROCESS_SOURCES})
 target_link_libraries(gmxpreprocess md)
@@ -96,6 +96,25 @@ set_target_properties(gmxcheck PROPERTIES OUTPUT_NAME "gmxcheck${GMX_BINARY_SUFF
 
 add_executable(mdrun ${MDRUN_SOURCES})
 target_link_libraries(mdrun ${GMX_EXTRA_LIBRARIES} ${GMX_OPENMM_LIBRARIES})
+# Trapped-electron PB grid (sfelectrons.c, sfmd-electrons = pbgrid), as gromacs-mc: FFTW's threaded planner for the
+# grid solve, and optionally OpenMP for its grid loops
+find_library(FFTW3F_THREADS_LIBRARY NAMES fftw3f_threads)
+if(FFTW3F_THREADS_LIBRARY)
+    target_link_libraries(mdrun ${FFTW3F_THREADS_LIBRARY})
+    set_source_files_properties(sfelectrons.c PROPERTIES COMPILE_DEFINITIONS SFEL_FFTW_THREADS)
+    message(STATUS "sfelectrons: threaded FFTW for the PB grid: ${FFTW3F_THREADS_LIBRARY}")
+endif()
+option(SFMD_OPENMP "OpenMP for the PB grid loops in sfelectrons.c (off: only fast with OMP_WAIT_POLICY=PASSIVE, and its sums are not reproducible)" OFF)
+if(SFMD_OPENMP)
+    find_package(OpenMP)
+endif()
+if(SFMD_OPENMP AND OPENMP_FOUND)
+    set_source_files_properties(sfelectrons.c PROPERTIES COMPILE_FLAGS "${OpenMP_C_FLAGS}")
+    set_target_properties(mdrun PROPERTIES LINK_FLAGS "${OpenMP_C_FLAGS}")
+    message(STATUS "sfelectrons: OpenMP for the PB grid loops: ${OpenMP_C_FLAGS}")
+else()
+    set_source_files_properties(sfelectrons.c PROPERTIES COMPILE_FLAGS "-Wno-unknown-pragmas")
+endif()
 set_target_properties(mdrun PROPERTIES OUTPUT_NAME "mdrun${GMX_BINARY_SUFFIX}")
 
 # this is to circumvent the following MSVC error: 

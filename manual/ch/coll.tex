@@ -1,0 +1,71 @@
+\chapter{Collisions in the cloud}
+\label{ch:coll}
+
+\devnote{This chapter describes the \code{pb-electrons} branch. Impact ionization is on by default with the cloud
+(\opt{sfmd-collisions = 1}); recombination is off (\opt{sfmd-coll-recombination = 0}).}
+
+The trapped electrons are hot and dense, and they collide with the ions: they ionize further, and once the pulse is
+over and the cloud cools they can be captured again.
+Both are \code{gromacs-mc}'s built-in Lotz channels (\opt{mcmd-coll-data = lotz}), restricted to the valence shell that
+ADK ionizes.
+
+\section{Electron-impact ionization}
+
+An ion in charge state $q$ at atom $k$ is ionized by the cloud at the rate $n_e(\vect x_k)\langle\sigma v\rangle$, with
+$n_e(\vect x_k)$ the cloud density at the atom (from the last solve, scaled to the current $N$) and Lotz's Maxwellian
+rate coefficient~\cite{lotz1968}
+\begin{equation}
+  \langle\sigma v\rangle = 6.7\times10^{-7}\,a\,\xi\,T^{-3/2}\,\frac{E_1(P/T)}{P/T}\ \ \mathrm{cm^3\,s^{-1}},\qquad a = 4.5,
+\end{equation}
+$\xi$ the number of electrons left in the valence shell (H 1, C 4, N 5, O 6, S 6, minus $q$), $P$ the ionization
+energy of the state (Table~\ref{tab:adk}), $T$ the cloud's actual temperature in eV and $E_1$ the exponential integral.
+The new electron stays in the cloud, at rest at the atom; a cloud electron pays $P$
+(Section~\ref{sec:energy}, item~3).
+An event the cloud cannot pay ($K<P$) is not made.
+Impact ionization is tried every step for every atom that ADK left alone, while the cloud has at least one electron.
+
+On lysozyme at $10^{15}$\,W/cm$^2$ impact ionization raises the ion charge by a third (1.29 to 1.72 per atom) but the new
+electrons stay trapped: the net charge, the ion energy (+6\,\%) and the directions hardly change.
+At $10^{16}$ it adds 2.5\,\% to the charge, at $10^{17}$ nothing.
+
+\section{Three-body recombination}
+\label{sec:recombination}
+
+Recombination is the inverse of impact ionization, from detailed balance (Saha):
+\begin{equation}
+  \alpha_3 = n_e^2\,\langle\sigma v\rangle_{q-1\to q}\,e^{P/T}\,\frac{g_{q-1}}{g_q}\,\lambda^3,\qquad
+  \lambda^3 = 1.656\times10^{-22}\,T^{-3/2}\ \mathrm{cm^3},
+\end{equation}
+with the rate coefficient of the lower state, its ionization energy $P$, and the statistical weights of the valence
+shell, $g = \binom{n_{\mathrm{shell}}}{\xi}$ ($n_{\mathrm{shell}}$ = 2 for H, 8 for C, N and O, 18 for S, its M shell).
+The captured electron leaves the cloud from rest at the atom, and its binding energy $P$ goes to the cloud
+(Section~\ref{sec:energy}, item~3).
+Ionization and recombination are drawn together: one random number decides whether an event happens, with the total rate,
+and which one.
+
+The rate grows as $n_e^2T^{-3}$, so it uses the floored temperature $\max(T,T_{\min})$ (Section~\ref{sec:temperature}),
+which caps it where the cloud cools towards zero; ionization uses the actual $T$, where it vanishes by itself.
+
+\paragraph{When.}
+\opt{sfmd-coll-recombination = 2} recombines only after the pulse: past the peak and below 1\,\% of the peak
+intensity.
+\opt{= 1} recombines at all times.
+During the pulse that is wrong for this model: recombination captures into the ground state, and the laser re-ionizes
+the atom at once; on lysozyme this capture--ADK pump made 9 times as many ADK events and 22\,\% more ion energy.
+Real three-body capture goes into highly excited states, which the field would strip again without much happening.
+Mode 1 is a diagnostic upper bound.
+
+On lysozyme at $10^{15}$\,W/cm$^2$, recombination after the pulse gives back most of the charge impact ionization added
+(1.72 to 1.35 per atom) and leaves the explosion as it was --- as in \code{gromacs-mc}, where recombination cycles around
+equilibrium without changing the dynamics.
+It is the sensible choice when charge states matter.
+
+\section{Limitations}
+
+\begin{itemize}
+  \item Valence shell only, the states of Table~\ref{tab:adk}: no inner-shell ionization.
+  \item Ground-state capture (see above), and no excitation.
+  \item At most one event per atom and step; at the densities at the atoms (up to $10^{24}$\,cm$^{-3}$) the rates can
+    exceed $1/\Delta t$, which then limits them --- relevant only for the fast cycling of mode 1.
+  \item The local density from the last solve, the temperature of the whole cloud.
+\end{itemize}

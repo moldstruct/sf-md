@@ -1,0 +1,179 @@
+\chapter{The laser on the cloud}
+\label{ch:laser}
+
+\devnote{This chapter describes the \code{pb-electrons} branch. The barrier and the heating are on by default with the
+cloud (\opt{sfmd-laser-barrier = 1}, \opt{sfmd-laser-heating = 1}).}
+
+The trapped electrons sit in the field of the pulse as much as the atoms do.
+Two effects are modelled, both from the cycle-averaged picture of a cluster in a strong
+field~\cite{ditmire1996,saalmann2006,fennel2010}: the field lowers the barrier the electrons must cross to leave, and it
+heats them.
+Without these the cloud is far too stable: a field-free cloud keeps $\sim$98\,\% of the electrons at every intensity,
+including $10^{17}$\,W/cm$^2$, where in reality the sample is stripped (Appendix~\ref{app:validation}).
+
+\section{The barrier}
+\label{sec:barrier}
+
+A sample of net charge $Q$ (the electrons that have left) in a uniform field $E_0$ has a potential
+$-\kc Qe/r - eE_0 z$ along the field: the Coulomb well tilts and a saddle opens on the downhill side at
+\begin{equation}
+  r_s = \sqrt{\kc Q/E_0},\qquad \Delta W = 2\sqrt{\kc Q\,e\,E_0}
+\end{equation}
+below the field-free escape level (zero at infinity), with $\kc = 1.44$\,eV\,nm.
+An electron less bound than $\Delta W$ can leave over the saddle.
+With \opt{sfmd-laser-barrier = 1} the model uses this lowering, with the envelope amplitude $E_0(t)$ of the current
+step, in three places:
+\begin{description}
+  \item[Escape at birth:] a new electron escapes if the depth at its atom is $D_k\le\Delta W$ (Section~\ref{sec:escape}).
+  \item[The spill:] after every solve, the cloud cells whose depth $-V$ is below $\Delta W$ are emptied at once.
+    Their electrons leave with their kinetic energy, $\frac32T$ each, and their electrostatic energy, computed exactly
+    as $U$ before minus $U$ after; the rest of the cloud keeps its kinetic energy.
+    $Q$ grows by the spilled number, so $\Delta W$ grows (as $\sqrt Q$) and the well deepens (as $Q$): the cloud is
+    solved again and spills again, up to 6 rounds, until less than 1\,\% of it (or fewer than 2 electrons) would
+    spill.
+  \item[Evaporation:] the depth of each cell in the Maxwell-tail evaporation (Section~\ref{sec:evaporation}) is
+    measured below the lowered level, $-V-\Delta W$; the leavers still take their true potential energy out of the
+    cloud.
+\end{description}
+The cloud itself is overdense ($\omega_p$ several times $\omega$), so the laser does not reach inside it and the
+equilibrium solve is unchanged; only the level the electrons must stay below moves.
+The picture holds while the saddle lies outside the sample ($r_s>R$); when it does not, $\Delta W$ exceeds the well and
+the cloud spills entirely, which is also what happens.
+\file{laser\_log.txt} has $E_0$, $Q$, $N$, $\Delta W$, $r_s$ and the spill, escape and evaporation counts at every solve.
+
+\paragraph{The instantaneous field.}
+With \opt{sfmd-laser-barrier = 2} the spill and the evaporation level follow the instantaneous field,
+$2\sqrt{\kc Q e|E(t)|}$, which breathes twice per optical cycle (2.8\,fs at 850\,nm); the solves, about 14 per cycle at
+0.2\,fs, resolve it.
+The escape at birth keeps $E_0$, since ADK electrons are born near the field crests.
+On lysozyme mode 2 gave the same charges, ion energies (within 2\,\%) and directions as mode 1, with more spill and
+less evaporation about 1\,fs earlier, but more seed noise and clamped cloud energy in 3 of 24 runs (the jumping level
+lets a cold cloud's tail evaporate in bulk between solves).
+Mode 1 is recommended; mode 2 is a check.
+
+\section{Heating}
+\label{sec:heating}
+
+The cloud absorbs energy from the laser by inverse bremsstrahlung: electrons driven by the field collide with the ions
+and turn the quiver motion into heat.
+For a sample much smaller than the wavelength the cycle-averaged absorption is that of a small dielectric particle with
+the Drude permittivity~\cite{ditmire1996},
+\begin{equation}
+  \varepsilon = 1 - \frac{\omega_p^2}{\omega(\omega+i\nu)},\qquad
+  P = \frac{\omega}{2}\,\varepsilon_0\,\mathrm{Im}\,\varepsilon\;|E_{\mathrm{in}}|^2\,V,
+\end{equation}
+with the plasma frequency $\omega_p$ of the cloud's mean density $n_e = N/V$, $V = \frac43\pi R^3$, and the field inside
+the cloud $E_{\mathrm{in}}$.
+$P\Delta t$ is added to the cloud's kinetic and total energy every MD step (work from outside, \code{laser heating} in
+the run summary and \file{laser\_log.txt}).
+
+\paragraph{The field inside.}
+For a sphere (\opt{sfmd-heating-shape = sphere}) $E_{\mathrm{in}} = 3E_0/(\varepsilon+2)$.
+The formula covers the three regimes of a cluster: shielding while the cloud is dense ($\omega_p\gg\omega$, small
+$E_{\mathrm{in}}$), the Mie resonance as it expands through $\omega_p = \sqrt3\,\omega$ (a density of $3n_c$,
+$n_c\approx1.55\times10^{21}$\,cm$^{-3}$ at 850\,nm), and the resistive regime $\nu\gg\omega$.
+With \opt{sfmd-heating-shape = ellipsoid} (the default) the cloud has the shape of the sample's gyration ellipsoid,
+semi-axes $a_i$, and the field along each axis is $E_{0,i}/(1+L_i(\varepsilon-1))$, with the depolarization factors
+\begin{equation}
+  L_i = \frac{a_1a_2a_3}{2}\int_0^\infty\frac{\dd s}{(s+a_i^2)\sqrt{(s+a_1^2)(s+a_2^2)(s+a_3^2)}}
+      = \frac{a_1a_2a_3}{3}\,R_D(a_j^2,a_k^2,a_i^2)
+\end{equation}
+(Carlson's elliptic integral; $\sum L_i = 1$, $L_i = \frac13$ for a sphere).
+The model has no field direction, so it averages over the orientation of the polarization:
+\begin{equation}
+  |E_{\mathrm{in}}|^2 = \frac{E_0^2}{3}\sum_i\big|1+L_i(\varepsilon-1)\big|^{-2}.
+\end{equation}
+The resonance then falls at $n_c/L_i$ for each axis rather than at $3n_c$; lysozyme starts at $L$ = 0.21, 0.37, 0.41.
+On lysozyme the ellipsoid gave 13\,\% more heating and 6\,\% more ion energy at $10^{15}$\,W/cm$^2$ and about 1\,\% at
+$10^{16}$, directions within the noise.
+
+\paragraph{The collision rate.}
+$\nu$ is the electron--ion collision rate~\cite{nrl},
+\begin{equation}
+  \nu_{ei} = 2.91\times10^{-6}\,Z\,n_e[\mathrm{cm^{-3}}]\,\ln\Lambda\,T^{-3/2}\ \mathrm{s^{-1}},\qquad
+  Z = \frac{\sum q_a^2}{\sum q_a},\qquad \ln\Lambda = \max\big(2,\ 24-\ln(\sqrt{n_e}/T)\big),
+\end{equation}
+at the cloud's temperature (at least the floor, Section~\ref{sec:temperature}), with two corrections:
+\begin{description}
+  \item[The cap] $\nu_{ei}\le$ \opt{sfmd-heating-nu-cap}$\cdot\omega_p$ (1): a cold, dense cloud is strongly coupled, and
+    the weak-coupling formula would give $\nu\gg\omega_p$; a collision rate saturates near the plasma frequency.
+    The cap is an order-of-magnitude choice, not fitted.
+    It matters only while the cloud is cold and dense: on lysozyme at $10^{15}$\,W/cm$^2$, a cap of 0.5 gave 16\,\% less
+    heating and 8\,\% less ion energy; at $10^{16}$ nothing.
+    No cap gave the same as cap 1.
+    0 removes it.
+  \item[Surface damping] $\nu \mathrel{+}= A\,\bar v/R$ with $\bar v = \sqrt{8T/\pi m_e}$ and $A$ =
+    \opt{sfmd-heating-surface} (1): the electrons of a nm-sized cloud cross it in $R/\bar v$, which damps its plasmon
+    (Kreibig damping~\cite{kreibig1995}).
+    Without it only $\nu_{ei}$ damps the resonance, and a hot, thin cloud ($\nu/\omega\sim10^{-5}$) can absorb MeV
+    within a step when a solve lands on the resonance: 15--19\,MeV heating outliers in about 1 of 8 runs at
+    $10^{16}$--$10^{17}$\,W/cm$^2$.
+    With $A=1$ ($\nu_s/\omega\approx$ 0.5--0.9 near the resonance) the outliers are gone and the seed spread of the ion
+    energy falls from $\pm90$ to $\pm28$\,keV at $10^{16}$.
+    $A$ is of order 1 in the literature and not fitted; from $A$ = 0.5 to 2 the ion energy at $10^{16}$ rises by 2.3\,\%,
+    directions unchanged.
+\end{description}
+
+\section{Linear polarization}
+\label{sec:polarization}
+
+\devnote{\opt{sfmd-laser-polarization} is new (tpr 185) and not validated beyond the checks below. Default 0: the laser
+without a direction, as in the rest of this chapter.}
+
+The barrier above is lowered all round, which overstates escape: the real saddle exists only on the downhill side of
+the field, on the polarization axis, and moves from one pole to the other every half cycle.
+With \opt{sfmd-laser-polarization = x}, \code{y} or \code{z} the field $E(t)\,\hat e$ of the pulse (carrier included)
+acts on the cloud and the ions directly:
+\begin{description}
+  \item[In the solve.] The laser's potential energy of an electron, $U_L = eE(t)\,(\mathbf r-\mathbf c)\cdot\hat e$
+    ($\mathbf c$ the heavy-atom centre), is added to the potential of the PB solve, $V = -\Phi + Kn + U_L$, so the cloud
+    polarizes: it shifts along $\hat s = -\mathrm{sign}(E)\,\hat e$, the direction the field pushes electrons.
+    The cloud's plasma frequency is several times the laser's, so it follows the field adiabatically; the solves sample
+    the carrier (14 per cycle at 0.2\,fs and 850\,nm; \code{grompp} warns below 8) and the field is held in between.
+  \item[The escape level] is the saddle on the downhill side. Along $\hat s$, outside the sample,
+    \begin{equation}
+      U(r) = -\frac{\kc Q}{r} - \frac{\kc P}{r^2} - |E|\,r,\qquad P = \mathbf p\cdot\hat s,
+    \end{equation}
+    with $\mathbf p$ the dipole of ions and cloud about $\mathbf c$ from the last solve (the shifted cloud gives $P<0$,
+    which raises the saddle). The saddle $r_s$ is the largest root of $|E|r^3-\kc Qr-2\kc P=0$, the level
+    $U_s = U(r_s)$; for $P=0$ it is the barrier of Section~\ref{sec:barrier}, $U_s=-\Delta W$.
+    If that root lies inside the sample ($r_s<R_e$, the gyration ellipsoid's radius along the axis), or there is
+    none because the dipole term wins (a strongly polarized cloud of small $Q$), $U$ falls all the way out beyond
+    $R_e$ and the level is $U(R_e)$, the highest point on the way out. (The first version took the root, or for no
+    root a point deep inside the sample, where the dipole term made the level huge; a neutral cloud along the long
+    axis was then held at $10^{17}$\,W/cm$^2$ and absorbed 130\,MeV in one of 8 runs.) Beyond the saddle plane
+    the field term is held at its value there: those cells are outside the trap.
+  \item[Escape] is then decided by energy against $U_s$: a cell spills if $V\ge U_s$, a newborn electron escapes if
+    $-D_k + U_L(\mathbf x_k)\ge U_s$, and evaporation measures each cell's depth as $U_s - V$. Electrons on the
+    up-field side are lifted by $U_L$, those on the down-field side lowered; the cloud's tail beyond the saddle region
+    goes first. Both \opt{sfmd-laser-barrier} modes behave the same with the polarization (it needs one of them on).
+  \item[The ions] feel $qE\,\hat e$ of the solve's field, so that ions and cloud together feel the net charge's
+    $QeE$.
+  \item[Heating] with the ellipsoid uses the field along the axis, $|E_{\mathrm{in}}|^2 = E_0^2\sum_i (\hat e\cdot\hat u_i)^2
+    |1+L_i(\varepsilon-1)|^{-2}$ with the sample's principal axes $\hat u_i$, instead of the orientation average.
+\end{description}
+
+\paragraph{Energy.}
+The cloud's energy ledger is kept without the field term ($E_{\mathrm{kin}} = E_{\mathrm{tot}} - U$, $U$ the
+electrostatic energy of cloud and ions), and the field's work on the cloud between two solves,
+$\int E\,\dd X$ with $X = \sum_i n_i\,\mathbf r_i\cdot\hat e$, is added to $E_{\mathrm{tot}}$ with the mean of the two
+solves' fields. For a cloud that follows the field linearly this sum telescopes to zero over a cycle; with the new
+field alone it would put $\frac12\alpha\,\Delta E^2$ into the cloud at every solve, several keV per solve for lysozyme at
+$10^{16}$\,W/cm$^2$. Births, captures, evaporation and spills update $X$ with the electrons' positions, so the work
+done on an electron born at its atom as it joins the shifted cloud is counted. The run's end reports the cumulative
+polarization work. The part stored in the shifted cloud, $\frac12\alpha E^2$, returns as the field falls; electrons born at
+their atoms into the shifted cloud gain about $|E|d$ each ($d$ the shift), and the down-field tail that spills was
+pulled there by the field, so a cloud that changes during the pulse keeps a net gain (643\,keV for lysozyme at
+$10^{16}$\,W/cm$^2$, against 1.6\,MeV of heating); \file{laser\_log.txt} gets the solve's field,
+$p_{\hat e}$, the work and the solves without a saddle as extra columns ($\Delta W$ and $r_s$ there are $-U_s$ and
+the saddle's distance).
+
+\section{What is left out}
+
+\begin{itemize}
+  \item The field's direction, unless \opt{sfmd-laser-polarization} is set: the barrier is lowered all round, not
+    only along the polarization, and the heating is orientation-averaged.
+  \item Quiver motion and the electrons' response within a cycle (except the spill with mode 2).
+  \item Heating at the surface (vacuum or Brunel heating), and the density profile: one mean density.
+  \item The energy of electrons that leave: they take their thermal energy, not a drift energy from the field.
+\end{itemize}

@@ -685,10 +685,43 @@ void pr_inputrec(FILE *fp,int indent,const char *title,t_inputrec *ir,
     PR("sfmd-pulse-focal-diameter",ir->sfmd_pulse_focal_diameter);
     PR("sfmd-pulse-wavelength",ir->sfmd_pulse_wavelength);
     PI("sfmd-autostop",ir->sfmd_autostop);
-    PR("sfmd-autostop-threshold",ir->sfmd_autostop_threshold);
+    PR("sfmd-autostop-energy-ratio",ir->sfmd_autostop_energy_ratio);
     PI("sfmd-initial-charges",ir->sfmd_initial_charges);
     PI("sfmd-detailed-output",ir->sfmd_detailed_output);
     PI("sfmd-charge-output-stride",ir->sfmd_charge_output_stride);
+    PI("sfmd-electrons",ir->sfmd_electrons);
+    PR("sfmd-pb-interval",ir->sfmd_pb_interval);
+    PR("sfmd-pb-smoothing",ir->sfmd_pb_smoothing);
+    PR("sfmd-pb-box-cut",ir->sfmd_pb_box_cut);
+    PI("sfmd-pb-long-range",ir->sfmd_pb_long_range);
+    PI("sfmd-evaporation",ir->sfmd_evaporation);
+    PR("sfmd-pb-newton-tol",ir->sfmd_pb_newton_tol);
+    PR("sfmd-pb-cells-per-smoothing",ir->sfmd_pb_cells_per_smoothing);
+    PR("sfmd-pb-box-max",ir->sfmd_pb_box_max);
+    PI("sfmd-pb-grid-limit",ir->sfmd_pb_grid_limit);
+    PI("sfmd-laser-barrier",ir->sfmd_laser_barrier);
+    PI("sfmd-laser-heating",ir->sfmd_laser_heating);
+    PR("sfmd-heating-nu-cap",ir->sfmd_heating_nu_cap);
+    PI("sfmd-collisions",ir->sfmd_collisions);
+    PI("sfmd-coll-recombination",ir->sfmd_coll_recombination);
+    PI("sfmd-heating-shape",ir->sfmd_heating_shape);
+    PI("sfmd-laser-polarization",ir->sfmd_laser_polarization);
+    PR("sfmd-heating-surface",ir->sfmd_heating_surface);
+    PR("sfmd-te-min",ir->sfmd_te_min);
+    PR("sfmd-autostop-angle",ir->sfmd_autostop_angle);
+    PR("sfmd-autostop-interval",ir->sfmd_autostop_interval);
+    PR("sfmd-autostop-min-time",ir->sfmd_autostop_min_time);
+    PI("sfmd-schedule-stages",ir->sfmd_sched_n);
+    {
+      int k;
+      char nm[32];
+
+      for (k = 0; k < ir->sfmd_sched_n; k++) {
+        sprintf(nm,"sfmd-schedule[%d].t",k);  PR(nm,ir->sfmd_sched_t[k]);
+        sprintf(nm,"sfmd-schedule[%d].dt",k); PR(nm,ir->sfmd_sched_dt[k]);
+        sprintf(nm,"sfmd-schedule[%d].pb",k); PR(nm,ir->sfmd_sched_pb[k]);
+      }
+    }
     
     pr_grp_opts(fp,indent,"grpopts",&(ir->opts),bMDPformat);
     pr_cosine(fp,indent,"efield-x",&(ir->ex[XX]),bMDPformat);

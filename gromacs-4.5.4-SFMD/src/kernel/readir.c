@@ -86,6 +86,8 @@ static char QMmethod[STRLEN],QMbasis[STRLEN],QMcharge[STRLEN],QMmult[STRLEN],
   SAoff[STRLEN],SAsteps[STRLEN],bTS[STRLEN],bOPT[STRLEN]; 
 static char efield_x[STRLEN],efield_xt[STRLEN],efield_y[STRLEN],
   efield_yt[STRLEN],efield_z[STRLEN],efield_zt[STRLEN];
+static char sfmd_electrons[STRLEN],sfmd_pb_long_range[STRLEN],sfmd_heating_shape[STRLEN],sfmd_schedule[STRLEN];
+static char sfmd_laser_polarization[STRLEN];
 
 enum {
     egrptpALL,         /* All particles have to be a member of a group.     */
@@ -810,6 +812,61 @@ static void add_wall_energrps(gmx_groups_t *groups,int nwall,t_symtab *symtab)
  * rename without conversion gives a pulse three orders of magnitude too
  * short.  Refuse the file and say what each entry became.  A warning would
  * not do: the run scripts pass -maxwarn, which would swallow it. */
+/* sfmd-* options renamed to match gromacs-mc's mcmd-* names (2026-11-11).
+ * Refused with the new name, not taken as aliases: the run scripts pass
+ * -maxwarn, so a warning would go unseen, and two names for one setting
+ * invite an mdp that sets both. */
+static void check_sfmd_renamed_entries(int ninp, t_inpfile *inp)
+{
+    static const char *renamed[][2] = {
+        { "sfmd-autostop-threshold", "sfmd-autostop-energy-ratio (same meaning and value; renamed as gromacs-mc's "
+                                     "when sfmd-autostop = 2, the direction stop, was added)" },
+        { "sfmd-recombination",      "sfmd-coll-recombination (same meaning and values 0/1/2; gromacs-mc's name)" },
+        { NULL, NULL }
+    };
+    int k, i;
+
+    for (k = 0; renamed[k][0] != NULL; k++)
+    {
+        for (i = 0; i < ninp; i++)
+        {
+            if (gmx_strcasecmp_min(renamed[k][0], inp[i].name) == 0)
+            {
+                gmx_fatal(FARGS, "The mdp option '%s' has been renamed: use %s.", renamed[k][0], renamed[k][1]);
+            }
+        }
+    }
+}
+
+/* The cloud's physics options default to the recommended model (2026-11-11),
+ * which only applies with sfmd-electrons = pbgrid.  Which of them the mdp
+ * gives explicitly is noted before they are read (reading adds the missing
+ * ones with their defaults), so that without the cloud the defaults can be
+ * switched off while an explicit setting is still refused. */
+#define SFMD_NCLOUD 6
+static const char *sfmd_cloud_keys[SFMD_NCLOUD] = {
+    "sfmd-laser-barrier", "sfmd-laser-heating", "sfmd-heating-shape", "sfmd-heating-surface",
+    "sfmd-collisions", "sfmd-te-min"
+};
+static gmx_bool sfmd_cloud_given[SFMD_NCLOUD];
+
+static void note_sfmd_cloud_entries(int ninp, t_inpfile *inp)
+{
+    int k, i;
+
+    for (k = 0; k < SFMD_NCLOUD; k++)
+    {
+        sfmd_cloud_given[k] = FALSE;
+        for (i = 0; i < ninp; i++)
+        {
+            if (gmx_strcasecmp_min(sfmd_cloud_keys[k], inp[i].name) == 0)
+            {
+                sfmd_cloud_given[k] = TRUE;
+            }
+        }
+    }
+}
+
 static void check_sfmd_legacy_entries(int ninp, t_inpfile *inp)
 {
     static const char *legacy[][2] = {
@@ -832,7 +889,7 @@ static void check_sfmd_legacy_entries(int ninp, t_inpfile *inp)
                        "2354.82" },
         { "userreal4", "sfmd-pulse-focal-diameter" },
         { "userreal5", "sfmd-pulse-wavelength" },
-        { "userreal6", "sfmd-autostop-threshold" },
+        { "userreal6", "sfmd-autostop-energy-ratio" },
         { NULL, NULL }
     };
     int  i, k;
@@ -887,9 +944,15 @@ static void check_sfmd_unknown_entries(int ninp, t_inpfile *inp)
     static const char *known[] = {
         "sfmd-pulse-peak-time", "sfmd-pulse-fwhm", "sfmd-pulse-energy",
         "sfmd-pulse-focal-diameter", "sfmd-pulse-wavelength",
-        "sfmd-autostop", "sfmd-autostop-threshold", "sfmd-initial-charges",
+        "sfmd-autostop", "sfmd-autostop-energy-ratio", "sfmd-autostop-angle", "sfmd-autostop-interval",
+        "sfmd-autostop-min-time", "sfmd-schedule", "sfmd-initial-charges",
         "sfmd-detailed-output", "sfmd-charge-output-stride",
-        NULL
+        "sfmd-electrons", "sfmd-pb-interval", "sfmd-pb-smoothing",
+        "sfmd-pb-box-cut", "sfmd-pb-long-range", "sfmd-evaporation",
+        "sfmd-pb-newton-tol", "sfmd-pb-cells-per-smoothing",
+        "sfmd-pb-box-max", "sfmd-pb-grid-limit", "sfmd-laser-barrier",
+        "sfmd-laser-heating", "sfmd-heating-nu-cap", "sfmd-heating-shape", "sfmd-heating-surface", "sfmd-te-min", "sfmd-collisions",
+        "sfmd-coll-recombination", "sfmd-laser-polarization", NULL
     };
     int  i, k;
     char list[1024];
@@ -940,6 +1003,8 @@ void get_ir(const char *mdparin,const char *mdparout,
    * after them userint1-4 are always present whether the user wrote them or
    * not. */
   check_sfmd_legacy_entries(ninp, inp);
+  check_sfmd_renamed_entries(ninp, inp);
+  note_sfmd_cloud_entries(ninp, inp);
 
   snew(dumstr[0],STRLEN);
   snew(dumstr[1],STRLEN);
@@ -1299,10 +1364,381 @@ void get_ir(const char *mdparin,const char *mdparout,
   RTYPE ("sfmd-pulse-focal-diameter",  ir->sfmd_pulse_focal_diameter,  0);
   RTYPE ("sfmd-pulse-wavelength",      ir->sfmd_pulse_wavelength,      0);
   ITYPE ("sfmd-autostop",              ir->sfmd_autostop,              0);
-  RTYPE ("sfmd-autostop-threshold",    ir->sfmd_autostop_threshold,    0.99);
+  RTYPE ("sfmd-autostop-energy-ratio", ir->sfmd_autostop_energy_ratio, 0.99);
+  /* sfmd-autostop = 2 (gromacs-mc's mcmd-autostop = 2): every
+   * sfmd-autostop-interval fs the median heavy-ion turn of the velocity
+   * direction is extrapolated (turning rate ~ 1/(t - t_peak)^2); the run
+   * stops when the turn still to come is < sfmd-autostop-angle degrees, but
+   * not before sfmd-autostop-min-time fs after the pulse peak; nsteps stays
+   * the upper limit */
+  RTYPE ("sfmd-autostop-angle",        ir->sfmd_autostop_angle,        2);
+  RTYPE ("sfmd-autostop-interval",     ir->sfmd_autostop_interval,     5);
+  RTYPE ("sfmd-autostop-min-time",     ir->sfmd_autostop_min_time,     60);
+  /* schedule (gromacs-mc's mcmd-schedule): from time t (fs) on, MD step dt
+   * (fs) and sfmd-pb-interval pb (fs), as t:dt:pb entries; before the first,
+   * dt and sfmd-pb-interval above; nsteps * dt still sets the end time */
+  STYPE ("sfmd-schedule",              sfmd_schedule,                  "");
   ITYPE ("sfmd-initial-charges",       ir->sfmd_initial_charges,       0);
   ITYPE ("sfmd-detailed-output",       ir->sfmd_detailed_output,       0);
   ITYPE ("sfmd-charge-output-stride",  ir->sfmd_charge_output_stride,  50);
+
+  /* The trapped-electron cloud (Poisson-Boltzmann), ported from gromacs-mc.
+   * Defaults are mc-md's validated ones, except sfmd-electrons, which stays
+   * none until the port is validated: with none, nothing below has any
+   * effect and the run is exactly what it was before. */
+  CCTYPE ("MOLDSTRUCT TRAPPED ELECTRONS (sfmd-electrons = pbgrid)");
+  STYPE ("sfmd-electrons",             sfmd_electrons,                 "none");
+  RTYPE ("sfmd-pb-interval",           ir->sfmd_pb_interval,           0.2);
+  RTYPE ("sfmd-pb-smoothing",          ir->sfmd_pb_smoothing,          0.25);
+  RTYPE ("sfmd-pb-box-cut",            ir->sfmd_pb_box_cut,            0.02);
+  STYPE ("sfmd-pb-long-range",         sfmd_pb_long_range,             "auto");
+  ITYPE ("sfmd-evaporation",           ir->sfmd_evaporation,           1);
+  RTYPE ("sfmd-pb-newton-tol",         ir->sfmd_pb_newton_tol,         1e-2);
+  RTYPE ("sfmd-pb-cells-per-smoothing",ir->sfmd_pb_cells_per_smoothing,2.5);
+  RTYPE ("sfmd-pb-box-max",            ir->sfmd_pb_box_max,            3);
+  ITYPE ("sfmd-pb-grid-limit",         ir->sfmd_pb_grid_limit,         384);
+  /* The laser on the cloud, cycle-averaged: the envelope field E0(t) lowers
+   * the escape saddle of the net charge Q to -2 sqrt(k Q e E0); trapped
+   * electrons above it spill out, newborn ones above it escape. */
+  /* 1: the envelope E0(t) everywhere; 2: spill and evaporation follow the
+   * instantaneous |E(t)| (carrier phase, resolved by the solves), the escape
+   * at birth keeps E0 (ADK births sit at the field crests) */
+  ITYPE ("sfmd-laser-barrier",         ir->sfmd_laser_barrier,         1);
+  /* The laser heats the cloud: inverse bremsstrahlung, the cycle-averaged
+   * absorption of a small Drude sphere (Ditmire et al. 1996); the electron-ion
+   * collision rate is capped at sfmd-heating-nu-cap x omega_p (0: no cap). */
+  ITYPE ("sfmd-laser-heating",         ir->sfmd_laser_heating,         1);
+  RTYPE ("sfmd-heating-nu-cap",        ir->sfmd_heating_nu_cap,        1.0);
+  /* The absorbing cloud as a sphere (E_in = 3 E0 / (eps + 2)) or as the
+   * sample's ellipsoid: depolarization factors L_i of its axes, averaged over
+   * the orientation of the polarization (sum_i |1 + L_i (eps - 1)|^-2 / 3). */
+  STYPE ("sfmd-heating-shape",         sfmd_heating_shape,             "ellipsoid");
+  /* Surface damping of the cloud's plasmon: nu_s = A vbar / R, vbar the mean
+   * thermal speed, added to the (capped) electron-ion rate; 0 = off. */
+  RTYPE ("sfmd-heating-surface",       ir->sfmd_heating_surface,       1.0);
+  /* Temperature floor of the cloud (eV, gromacs-mc mcmd-te-min): the PB solve,
+   * evaporation and three-body recombination use max(T_e, floor); impact
+   * ionization the actual T_e, which is tracked below it (E_kin is not clamped
+   * at 0, no energy is added).  0: the old model (solve floor 1 eV). */
+  RTYPE ("sfmd-te-min",                ir->sfmd_te_min,                1.0);
+  /* Electron-impact ionization by the trapped cloud: Lotz's Maxwellian rate at
+   * the cloud's T_e and the local density at the atom; the new electron joins
+   * the cloud, which pays the ionization energy.  No recombination. */
+  ITYPE ("sfmd-collisions",            ir->sfmd_collisions,            1);
+  /* Three-body recombination, the inverse of the impact ionization by detailed
+   * balance (Saha); the captured electron leaves the cloud, which gets the
+   * binding energy.  1: always; 2: only after the pulse (past the peak and
+   * below 1 % of the peak intensity), without capture-and-reionization by
+   * the laser during it. */
+  ITYPE ("sfmd-coll-recombination",    ir->sfmd_coll_recombination,    0);
+  /* Linear polarization of the laser (development): 0 = the laser has no
+   * direction (cycle-averaged barrier, all round); x, y or z = the
+   * instantaneous field E(t) along that axis enters the PB solve (the cloud
+   * polarizes), the escape level is the saddle of net charge, cloud dipole
+   * and field on the downhill side, and the ions feel q E(t). */
+  STYPE ("sfmd-laser-polarization",    sfmd_laser_polarization,        "0");
+
+  if (gmx_strcasecmp(sfmd_heating_shape, "sphere") == 0)
+  {
+      ir->sfmd_heating_shape = 0;
+  }
+  else if (gmx_strcasecmp(sfmd_heating_shape, "ellipsoid") == 0)
+  {
+      ir->sfmd_heating_shape = 1;
+  }
+  else
+  {
+      gmx_fatal(FARGS, "sfmd-heating-shape must be sphere or ellipsoid, not '%s'.", sfmd_heating_shape);
+  }
+  if (gmx_strcasecmp(sfmd_laser_polarization, "0") == 0 || gmx_strcasecmp(sfmd_laser_polarization, "no") == 0 ||
+      gmx_strcasecmp(sfmd_laser_polarization, "none") == 0 || gmx_strcasecmp(sfmd_laser_polarization, "off") == 0)
+  {
+      ir->sfmd_laser_polarization = 0;
+  }
+  else if (gmx_strcasecmp(sfmd_laser_polarization, "x") == 0)
+  {
+      ir->sfmd_laser_polarization = 1;
+  }
+  else if (gmx_strcasecmp(sfmd_laser_polarization, "y") == 0)
+  {
+      ir->sfmd_laser_polarization = 2;
+  }
+  else if (gmx_strcasecmp(sfmd_laser_polarization, "z") == 0)
+  {
+      ir->sfmd_laser_polarization = 3;
+  }
+  else
+  {
+      gmx_fatal(FARGS, "sfmd-laser-polarization must be 0 (no direction), x, y or z, not '%s'.", sfmd_laser_polarization);
+  }
+  if (gmx_strcasecmp(sfmd_electrons, "pbgrid") == 0)
+  {
+      ir->sfmd_electrons = 1;
+  }
+  else if (gmx_strcasecmp(sfmd_electrons, "none") == 0 || gmx_strcasecmp(sfmd_electrons, "no") == 0)
+  {
+      ir->sfmd_electrons = 0;
+  }
+  else
+  {
+      gmx_fatal(FARGS, "sfmd-electrons must be pbgrid or none, not '%s'.", sfmd_electrons);
+  }
+  /* Without the cloud its physics defaults are off (the tpr then holds what
+   * the build before these defaults wrote); an explicit setting is checked
+   * below. */
+  if (ir->sfmd_electrons == 0)
+  {
+      if (!sfmd_cloud_given[0]) { ir->sfmd_laser_barrier   = 0; }
+      if (!sfmd_cloud_given[1]) { ir->sfmd_laser_heating   = 0; }
+      if (!sfmd_cloud_given[2]) { ir->sfmd_heating_shape   = 0; }
+      if (!sfmd_cloud_given[3]) { ir->sfmd_heating_surface = 0; }
+      if (!sfmd_cloud_given[4]) { ir->sfmd_collisions      = 0; }
+      if (!sfmd_cloud_given[5]) { ir->sfmd_te_min          = 0; }
+  }
+  /* auto becomes -1 here and is resolved by sfmd_resolve_long_range() once
+   * grompp knows the number of atoms. */
+  if (gmx_strcasecmp(sfmd_pb_long_range, "auto") == 0)
+  {
+      ir->sfmd_pb_long_range = (ir->sfmd_electrons == 1) ? -1 : 0;
+  }
+  else if (gmx_strcasecmp(sfmd_pb_long_range, "1") == 0 || gmx_strcasecmp(sfmd_pb_long_range, "yes") == 0 ||
+           gmx_strcasecmp(sfmd_pb_long_range, "on") == 0)
+  {
+      ir->sfmd_pb_long_range = 1;
+  }
+  else if (gmx_strcasecmp(sfmd_pb_long_range, "0") == 0 || gmx_strcasecmp(sfmd_pb_long_range, "no") == 0 ||
+           gmx_strcasecmp(sfmd_pb_long_range, "off") == 0)
+  {
+      ir->sfmd_pb_long_range = 0;
+  }
+  else
+  {
+      gmx_fatal(FARGS, "sfmd-pb-long-range must be auto, 1 or 0, not '%s'.", sfmd_pb_long_range);
+  }
+  if (ir->sfmd_electrons == 0 && ir->sfmd_pb_long_range == 1)
+  {
+      gmx_fatal(FARGS, "sfmd-pb-long-range needs the electron cloud (sfmd-electrons = pbgrid).");
+  }
+  if (ir->sfmd_electrons == 1 && (ir->sfmd_pb_interval <= 0 || ir->sfmd_pb_smoothing <= 0))
+  {
+      gmx_fatal(FARGS, "sfmd-pb-interval and sfmd-pb-smoothing must be > 0.");
+  }
+  if (ir->sfmd_electrons == 1 && (ir->sfmd_pb_newton_tol <= 0 || ir->sfmd_pb_cells_per_smoothing <= 0 ||
+                                  ir->sfmd_pb_box_max < 1.3 || ir->sfmd_pb_grid_limit < 24))
+  {
+      gmx_fatal(FARGS, "sfmd-pb-newton-tol and sfmd-pb-cells-per-smoothing must be > 0, sfmd-pb-box-max >= 1.3 "
+                "(the smallest adaptive box) and sfmd-pb-grid-limit >= 24.");
+  }
+  if (ir->sfmd_electrons == 0 && ir->sfmd_laser_heating != 0)
+  {
+      gmx_fatal(FARGS, "sfmd-laser-heating heats the electron cloud and needs sfmd-electrons = pbgrid.");
+  }
+  if (ir->sfmd_electrons == 0 && ir->sfmd_collisions != 0)
+  {
+      gmx_fatal(FARGS, "sfmd-collisions ionizes by the trapped electron cloud and needs sfmd-electrons = pbgrid.");
+  }
+  if (ir->sfmd_coll_recombination < 0 || ir->sfmd_coll_recombination > 2)
+  {
+      gmx_fatal(FARGS, "sfmd-coll-recombination must be 0 (off), 1 (always) or 2 (only after the pulse).");
+  }
+  if (ir->sfmd_coll_recombination != 0 && ir->sfmd_collisions == 0)
+  {
+      gmx_fatal(FARGS, "sfmd-coll-recombination is the inverse of the impact ionization and needs sfmd-collisions = 1.");
+  }
+  if (ir->sfmd_autostop < 0 || ir->sfmd_autostop > 2)
+  {
+      gmx_fatal(FARGS, "sfmd-autostop must be 0 (off), 1 (E_kin/E_tot over sfmd-autostop-energy-ratio) or 2 (ion "
+                "directions settled, sfmd-autostop-angle).");
+  }
+  if (ir->sfmd_autostop == 2 && (ir->sfmd_autostop_angle <= 0 || ir->sfmd_autostop_min_time < 0 ||
+                                 ir->sfmd_autostop_interval < ir->delta_t * 1e3))
+  {
+      gmx_fatal(FARGS, "sfmd-autostop = 2 needs sfmd-autostop-angle > 0 (degrees), sfmd-autostop-min-time >= 0 (fs) "
+                "and sfmd-autostop-interval (fs) at least one time step (dt = %g fs).", ir->delta_t * 1e3);
+  }
+  if (ir->sfmd_te_min < 0)
+  {
+      gmx_fatal(FARGS, "sfmd-te-min must be >= 0 (eV; 0: the old model, solve floor 1 eV).");
+  }
+  if (ir->sfmd_heating_surface < 0)
+  {
+      gmx_fatal(FARGS, "sfmd-heating-surface must be >= 0 (0: off).");
+  }
+  if (ir->sfmd_heating_nu_cap < 0)
+  {
+      gmx_fatal(FARGS, "sfmd-heating-nu-cap must be >= 0 (0: no cap).");
+  }
+  if (ir->sfmd_laser_barrier < 0 || ir->sfmd_laser_barrier > 2)
+  {
+      gmx_fatal(FARGS, "sfmd-laser-barrier must be 0 (off), 1 (envelope) or 2 (instantaneous field for spill and evaporation).");
+  }
+  if (ir->sfmd_electrons == 0 && ir->sfmd_laser_barrier != 0)
+  {
+      gmx_fatal(FARGS, "sfmd-laser-barrier acts on the electron cloud and needs sfmd-electrons = pbgrid.");
+  }
+  if (ir->sfmd_laser_polarization != 0)
+  {
+      double period_fs;
+
+      if (ir->sfmd_electrons == 0 || ir->sfmd_laser_barrier == 0)
+      {
+          gmx_fatal(FARGS, "sfmd-laser-polarization puts the laser field into the electron cloud and replaces the "
+                    "direction-free barrier: it needs sfmd-electrons = pbgrid and sfmd-laser-barrier = 1 or 2.");
+      }
+      /* the solves sample the carrier: at least 8 per optical cycle */
+      period_fs = ir->sfmd_pulse_wavelength / 299.792458;
+      if (period_fs > 0 && ir->sfmd_pb_interval > period_fs / 8)
+      {
+          sprintf(warn_buf, "sfmd-laser-polarization: sfmd-pb-interval = %g fs samples the %.2f fs optical cycle "
+                  "fewer than 8 times; the field in the cloud is held between solves.",
+                  ir->sfmd_pb_interval, period_fs);
+          warning(wi, warn_buf);
+      }
+  }
+  if (ir->sfmd_pb_long_range == 1 && ir->rcoulomb <= 0)
+  {
+      gmx_fatal(FARGS, "sfmd-pb-long-range needs a Coulomb cutoff (rcoulomb > 0): GROMACS does the pairs within "
+                "it, the grid the rest.");
+  }
+  /* The two-stage restart (sfmd-initial-charges = 1) hands over the charges
+   * but not the cloud: the trapped electrons would vanish and their charge
+   * with them.  Refused until the cloud's state is carried over. */
+  if (ir->sfmd_electrons == 1 && ir->sfmd_initial_charges != 0)
+  {
+      gmx_fatal(FARGS, "sfmd-initial-charges = 1 cannot be used with sfmd-electrons = pbgrid yet: charges.txt "
+                "does not carry the trapped electrons, so a restart would lose the cloud.");
+  }
+
+  /* sfmd-schedule: "t:dt:pb t:dt:pb ..." (fs), as gromacs-mc's mcmd-schedule.
+   * Each stage must start on a step of the one before, and the first not
+   * before the pulse peak + 3 sigma: a change while the sample is still being
+   * ionized branches the ADK history (gromacs-mc: a switch during the pulse
+   * decorrelated the ions by ~2 degrees within 5 fs whatever was changed). */
+  ir->sfmd_sched_n = 0;
+  {
+      char   buf[STRLEN], *tok, *save = NULL;
+      double tprev = ir->init_t * 1e3, dtprev = ir->delta_t * 1e3, tend;
+      int    k;
+
+      strncpy(buf, sfmd_schedule, STRLEN - 1);
+      buf[STRLEN - 1] = '\0';
+      for (tok = strtok_r(buf, " \t,;", &save); tok != NULL; tok = strtok_r(NULL, " \t,;", &save))
+      {
+          double t, dt, pb, nst;
+
+          if (ir->sfmd_sched_n >= SFMD_SCHED_MAX)
+          {
+              gmx_fatal(FARGS, "sfmd-schedule: at most %d entries.", SFMD_SCHED_MAX);
+          }
+          if (sscanf(tok, "%lf:%lf:%lf", &t, &dt, &pb) != 3)
+          {
+              gmx_fatal(FARGS, "sfmd-schedule: '%s' is not t:dt:pb (fs, e.g. 100:0.01:0.5).", tok);
+          }
+          if (t <= tprev || dt <= 0 || pb <= 0)
+          {
+              gmx_fatal(FARGS, "sfmd-schedule: '%s': the times must increase (and come after tinit), dt and pb be > 0.",
+                        tok);
+          }
+          nst = (t - tprev) / dtprev;
+          if (fabs(nst - floor(nst + 0.5)) > 1e-3)
+          {
+              gmx_fatal(FARGS, "sfmd-schedule: '%s' starts %g fs after the stage before, which is not a whole number of "
+                        "its steps (%g fs).", tok, t - tprev, dtprev);
+          }
+          k = ir->sfmd_sched_n++;
+          ir->sfmd_sched_t[k]  = t;
+          ir->sfmd_sched_dt[k] = dt;
+          ir->sfmd_sched_pb[k] = pb;
+          tprev = t; dtprev = dt;
+      }
+      if (ir->sfmd_sched_n > 0)
+      {
+          const double sig = ir->sfmd_pulse_fwhm / 2.3548200450309493, tmin = ir->sfmd_pulse_peak_time + 3 * sig;
+          double       nsteps_true = 0, ta = ir->init_t * 1e3, dta = ir->delta_t * 1e3;
+
+          if (ir->eI != eiMD)
+          {
+              gmx_fatal(FARGS, "sfmd-schedule needs integrator = md (leap-frog).");
+          }
+          if (ir->nstlist < 0)
+          {
+              gmx_fatal(FARGS, "sfmd-schedule needs nstlist >= 0.");
+          }
+          if (ir->sfmd_pulse_energy > 0 && ir->sfmd_sched_t[0] < tmin - 1e-6)
+          {
+              gmx_fatal(FARGS, "sfmd-schedule: the first change (%g fs) comes before the pulse peak + 3 sigma (%g + 3 x "
+                        "%g = %g fs). Changing the step or the PB interval while the sample is still being "
+                        "ionized branches the ADK history.", ir->sfmd_sched_t[0], ir->sfmd_pulse_peak_time,
+                        floor(sig * 1e3 + 0.5) * 1e-3, floor(tmin * 1e3 + 0.5) * 1e-3);
+          }
+          /* The output intervals count on the grid tinit + k x interval in every
+           * stage (md.c), so each stage's first step must be a whole number of
+           * its own steps from tinit, and every interval a whole number of every
+           * stage's steps. */
+          {
+              const char *onm[] = { "nstenergy", "nstlog", "nstxout", "nstvout", "nstfout",
+                                    "nstxtcout", "sfmd-charge-output-stride" };
+              const int   onst[] = { ir->nstenergy, ir->nstlog, ir->nstxout, ir->nstvout,
+                                     ir->nstfout, ir->nstxtcout, ir->sfmd_charge_output_stride };
+              const double dt0 = ir->delta_t * 1e3;
+              double       x;
+              int          j;
+
+              for (k = 0; k < ir->sfmd_sched_n; k++)
+              {
+                  const double dtk = ir->sfmd_sched_dt[k];
+
+                  x = (ir->sfmd_sched_t[k] - ir->init_t * 1e3) / dtk;
+                  if (fabs(x - floor(x + 0.5)) > 1e-3)
+                  {
+                      gmx_fatal(FARGS, "sfmd-schedule: stage %d starts at %g fs, %g fs after tinit, which is not a whole "
+                                "number of its own steps (%g fs); the output would leave the time grid. Move the start "
+                                "to a multiple of %g fs.", k + 1, ir->sfmd_sched_t[k],
+                                ir->sfmd_sched_t[k] - ir->init_t * 1e3, dtk, dtk);
+                  }
+                  for (j = 0; j < (int)(sizeof(onst) / sizeof(onst[0])); j++)
+                  {
+                      if (onst[j] <= 0)
+                      {
+                          continue;
+                      }
+                      x = onst[j] * dt0 / dtk;
+                      if (x < 1 - 1e-3 || fabs(x - floor(x + 0.5)) > 1e-3)
+                      {
+                          gmx_fatal(FARGS, "sfmd-schedule: %s = %d is every %g fs, which is not a whole number of stage "
+                                    "%d's steps (%g fs). Choose intervals that every stage's dt divides.",
+                                    onm[j], onst[j], onst[j] * dt0, k + 1, dtk);
+                      }
+                  }
+              }
+          }
+          /* the end time stays tinit + nsteps * dt; count the steps it takes */
+          tend = ta + ir->nsteps * dta;
+          for (k = 0; k <= ir->sfmd_sched_n; k++)
+          {
+              const double tb = (k < ir->sfmd_sched_n) ? ir->sfmd_sched_t[k] : 1e30;
+
+              if (tend <= tb)
+              {
+                  nsteps_true += floor((tend - ta) / dta + 0.5);
+                  break;
+              }
+              nsteps_true += floor((tb - ta) / dta + 0.5);
+              ta = tb; dta = ir->sfmd_sched_dt[k];
+          }
+          if (ir->nsteps >= 0)
+          {
+              sprintf(warn_buf, "sfmd-schedule: %d stage%s after the first; the run ends at %g fs (tinit + nsteps x dt) "
+                      "after %.0f steps instead of %lld.", ir->sfmd_sched_n, ir->sfmd_sched_n > 1 ? "s" : "", tend,
+                      nsteps_true, (long long)ir->nsteps);
+              warning_note(wi, warn_buf);
+          }
+          if (ir->nsteps >= 0 && tend <= ir->sfmd_sched_t[0])
+          {
+              warning(wi, "sfmd-schedule: the run ends before the first change, the schedule does nothing.");
+          }
+      }
+  }
 
   /* Every sfmd-* option has now been read out, so anything still unread and
    * carrying that prefix is a typo. */
@@ -2413,6 +2849,60 @@ static gmx_bool absolute_reference(t_inputrec *ir,gmx_mtop_t *sys,ivec AbsRef)
   }
 
   return (AbsRef[XX] != 0 && AbsRef[YY] != 0 && AbsRef[ZZ] != 0);
+}
+
+/* sfmd-pb-long-range = auto (-1 from get_ir), as gromacs-mc's
+ * mcmd_resolve_long_range(): on, with a 2 nm cutoff, above
+ * SFMD_LR_AUTO_NATOMS atoms, where the grid long range is faster than all
+ * pairs; all pairs (no cutoff) up to it.  The mdp's cut-offs are replaced,
+ * with a note.  Only reached with sfmd-electrons = pbgrid (auto is 0
+ * otherwise), so runs without the cloud keep their own cut-offs.  Then the
+ * guard: the cloud with a Coulomb cutoff but no long range loses the
+ * long-range push of the net charge (warning). */
+#define SFMD_LR_AUTO_NATOMS 10000
+#define SFMD_LR_AUTO_RC     2.0
+void sfmd_resolve_long_range(t_inputrec *ir, int natoms, warninp_t wi)
+{
+  char buf[STRLEN];
+
+  if (ir->sfmd_pb_long_range == -1)
+  {
+      if (ir->ePBC != epbcNONE || ir->coulombtype != eelCUT)
+      {
+          warning_error(wi, "sfmd-pb-long-range = auto sets the cut-offs itself and needs pbc = no and coulombtype = "
+                        "Cut-off; set sfmd-pb-long-range to 1 or 0 to keep your own.");
+          return;
+      }
+      if (natoms > SFMD_LR_AUTO_NATOMS)
+      {
+          ir->sfmd_pb_long_range = 1;
+          ir->rlist   = ir->rcoulomb = ir->rvdw = ir->rlistlong = SFMD_LR_AUTO_RC;
+          ir->nstlist = 5;
+          ir->ns_type = ensGRID;
+          sprintf(buf, "sfmd-pb-long-range = auto: %d atoms > %d, long range on: rcoulomb = rvdw = rlist = %g nm, "
+                  "nstlist = 5, ns-type = grid (the mdp's cut-offs are replaced)", natoms, SFMD_LR_AUTO_NATOMS,
+                  SFMD_LR_AUTO_RC);
+      }
+      else
+      {
+          ir->sfmd_pb_long_range = 0;
+          ir->rlist   = ir->rcoulomb = ir->rvdw = ir->rlistlong = 0;
+          ir->nstlist = 0;
+          ir->ns_type = ensSIMPLE;
+          sprintf(buf, "sfmd-pb-long-range = auto: %d atoms <= %d, all pairs: rcoulomb = rvdw = rlist = 0, "
+                  "nstlist = 0, ns-type = simple (the mdp's cut-offs are replaced)", natoms, SFMD_LR_AUTO_NATOMS);
+      }
+      ir->rcoulomb_switch = ir->rvdw_switch = 0;
+      fprintf(stderr, "\n%s\n\n", buf);
+      warning_note(wi, buf);
+  }
+  if (ir->sfmd_electrons == 1 && ir->sfmd_pb_long_range == 0 && ir->rcoulomb > 0)
+  {
+      sprintf(buf, "sfmd-electrons = pbgrid with rcoulomb = %g nm but sfmd-pb-long-range = 0: ion pairs beyond the "
+              "cutoff feel nothing, so the net charge's long-range push is lost and the sample under-explodes.  Use "
+              "sfmd-pb-long-range = 1 (or auto), or rcoulomb = rvdw = rlist = 0 for all pairs.", ir->rcoulomb);
+      warning(wi, buf);
+  }
 }
 
 void triple_check(const char *mdparin,t_inputrec *ir,gmx_mtop_t *sys,
